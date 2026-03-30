@@ -1,14 +1,11 @@
 """
 Mock Inspection Server
-──────────────────────────────────────────────────
 Simulates the Raspberry Pi 5 API so you can test the mobile app
 WITHOUT any hardware. Run this on your computer.
 
 Usage:
     pip install flask flask-cors flask-socketio
     python mock_server.py
-
-Then set your computer's local IP in the mobile app's src/config/api.js
 """
 
 from flask import Flask, jsonify, request
@@ -23,19 +20,15 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ─── Fake Data Generator ────────────────────────────────────
-
-DEFECT_TYPES = ['color_defect', 'hole', 'fold', 'cut']
+DEFECT_TYPES = ['color_defect', 'hole', 'fold']
 inspection_counter = 0
 inspections_db = []
 
 
 def generate_fake_inspection():
-    """Creates a realistic-looking inspection result."""
     global inspection_counter
     inspection_counter += 1
 
-    # 70% chance of Good, 30% chance of Bad (realistic for leather)
     num_defects = random.choices(
         [0, 1, 2, 3, 4],
         weights=[50, 25, 15, 7, 3],
@@ -54,7 +47,6 @@ def generate_fake_inspection():
             "h": random.randint(20, 100),
         })
 
-    # Classification logic: Bad if 2+ defects or any hole
     has_hole = any(d['type'] == 'hole' for d in defects)
     classification = 'Bad' if (num_defects >= 2 or has_hole) else 'Good'
 
@@ -68,18 +60,16 @@ def generate_fake_inspection():
         "created_at": datetime.now().isoformat(),
     }
 
-    inspections_db.insert(0, inspection)  # newest first
+    inspections_db.insert(0, inspection)
     return inspection
 
 
 def generate_initial_data():
-    """Pre-populate with some history so analytics has data."""
     global inspections_db, inspection_counter
 
-    # Generate 30 past inspections spread over the last 7 days
     for i in range(30):
         inspection_counter += 1
-        hours_ago = random.randint(1, 168)  # up to 7 days ago
+        hours_ago = random.randint(1, 168)
         timestamp = datetime.now() - timedelta(hours=hours_ago)
 
         num_defects = random.choices([0, 1, 2, 3], weights=[50, 25, 15, 10], k=1)[0]
@@ -107,22 +97,17 @@ def generate_initial_data():
             "created_at": timestamp.isoformat(),
         })
 
-    # Sort newest first
     inspections_db.sort(key=lambda x: x['created_at'], reverse=True)
     print(f"Generated {len(inspections_db)} historical inspections")
 
 
-# ─── Auto-simulation: new inspection every 15 seconds ────────
-
 def auto_simulate():
-    """Periodically generates fake inspections to simulate real-time."""
     while True:
-        time.sleep(15)  # New inspection every 15 seconds
+        time.sleep(15)
         inspection = generate_fake_inspection()
-        print(f"[SIM] New inspection: {inspection['hide_id']} → {inspection['classification']} "
+        print(f"[SIM] New inspection: {inspection['hide_id']} -> {inspection['classification']} "
               f"({inspection['total_defects']} defects)")
 
-        # Push to connected mobile clients
         socketio.emit('new_inspection', inspection)
 
         stats = compute_analytics('today')
@@ -132,8 +117,6 @@ def auto_simulate():
             "bad_count": stats["bad_count"],
         })
 
-
-# ─── Analytics Computation ───────────────────────────────────
 
 def compute_analytics(period='today'):
     now = datetime.now()
@@ -164,8 +147,6 @@ def compute_analytics(period='today'):
         "period": period,
     }
 
-
-# ─── API Routes (same as the real Pi server) ─────────────────
 
 @app.route('/api/status', methods=['GET'])
 def get_status():
@@ -259,8 +240,6 @@ def get_timeline():
     return jsonify({"timeline": timeline})
 
 
-# ─── WebSocket Events ────────────────────────────────────────
-
 @socketio.on('connect')
 def handle_connect():
     print("[WS] Mobile client connected")
@@ -277,12 +256,9 @@ def handle_disconnect():
     print("[WS] Mobile client disconnected")
 
 
-# ─── Main ────────────────────────────────────────────────────
-
 if __name__ == '__main__':
     generate_initial_data()
 
-    # Start auto-simulation in background thread
     sim_thread = threading.Thread(target=auto_simulate, daemon=True)
     sim_thread.start()
 
@@ -294,16 +270,7 @@ if __name__ == '__main__':
     print()
     print("  Server running at: http://0.0.0.0:5000")
     print()
-    print("  NEXT STEPS:")
-    print("  1. Find your computer's local IP:")
-    print("     - Windows: ipconfig → look for IPv4 Address")
-    print("     - Mac/Linux: ifconfig or ip addr")
-    print("  2. Put that IP in the mobile app's src/config/api.js")
-    print("  3. Run 'npx expo start' in the mobile app folder")
-    print("  4. Scan the QR code with Expo Go on your phone")
-    print()
     print("  A new fake inspection generates every 15 seconds.")
-    print("  Pull down to refresh in the app anytime.")
     print("=" * 55)
     print()
 
