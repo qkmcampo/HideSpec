@@ -7,7 +7,7 @@ import time
 app = Flask(__name__)
 
 print("=" * 55)
-print("HIDESPEC — LIVE CAMERA STREAM SERVER")
+print("HIDESPEC - LIVE CAMERA STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
@@ -31,8 +31,10 @@ last_annotated = None
 last_detections = []
 frame_counter = 0
 
+
 def run_detection(frame):
     global last_detections
+
     results = model(frame, imgsz=320, conf=0.25, verbose=False)
     annotated = results[0].plot()
 
@@ -52,6 +54,7 @@ def run_detection(frame):
     last_detections = detections
     return annotated
 
+
 def mjpeg_generator():
     global last_annotated, frame_counter
 
@@ -60,10 +63,12 @@ def mjpeg_generator():
             frame = picam2.capture_array()
             frame_counter += 1
 
+            # Run YOLO only every 3rd frame
             if last_annotated is None or frame_counter % 3 == 0:
                 last_annotated = run_detection(frame)
 
             frame_bgr = cv2.cvtColor(last_annotated, cv2.COLOR_RGB2BGR)
+
             ok, buffer = cv2.imencode(
                 ".jpg",
                 frame_bgr,
@@ -76,9 +81,11 @@ def mjpeg_generator():
                 b"--frame\r\n"
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
+
         except Exception as e:
             print(f"Stream error: {e}")
             time.sleep(0.1)
+
 
 @app.route("/video_feed")
 def video_feed():
@@ -86,6 +93,7 @@ def video_feed():
         mjpeg_generator(),
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
+
 
 @app.route("/api/stream/status")
 def stream_status():
@@ -95,12 +103,14 @@ def stream_status():
         "detections": last_detections,
     })
 
+
 @app.route("/api/stream/snapshot")
 def snapshot():
     try:
         frame = picam2.capture_array()
         annotated = run_detection(frame)
         frame_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
+
         ok, buffer = cv2.imencode(
             ".jpg",
             frame_bgr,
@@ -108,9 +118,12 @@ def snapshot():
         )
         if not ok:
             return ("Snapshot encode failed", 500)
+
         return Response(buffer.tobytes(), mimetype="image/jpeg")
+
     except Exception as e:
         return (f"Snapshot failed: {e}", 500)
+
 
 @app.route("/")
 def home():
@@ -122,6 +135,7 @@ def home():
       </body>
     </html>
     """
+
 
 if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
