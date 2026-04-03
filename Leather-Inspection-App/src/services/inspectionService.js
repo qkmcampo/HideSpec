@@ -1,8 +1,6 @@
 import { API_BASE_URL, WS_URL } from '../config/api';
 import { io } from 'socket.io-client';
 
-// ─── REST API Calls ─────────────────────────────────────────
-
 export async function getSystemStatus() {
   try {
     const response = await fetch(`${API_BASE_URL}/api/status`);
@@ -75,14 +73,10 @@ export function getInspectionImageUrl(inspectionId) {
   return `${API_BASE_URL}/api/inspections/${inspectionId}/image`;
 }
 
-// ─── WebSocket Connection ───────────────────────────────────
-
 let socket = null;
 
 export function connectWebSocket(handlers = {}) {
-  if (socket && socket.connected) {
-    return socket;
-  }
+  if (socket && socket.connected) return socket;
 
   socket = io(WS_URL, {
     transports: ['websocket'],
@@ -93,20 +87,20 @@ export function connectWebSocket(handlers = {}) {
 
   socket.on('connect', () => {
     console.log('WebSocket connected');
-    if (handlers.onConnect) handlers.onConnect();
+    handlers.onConnect?.();
   });
 
   socket.on('disconnect', () => {
     console.log('WebSocket disconnected');
-    if (handlers.onDisconnect) handlers.onDisconnect();
+    handlers.onDisconnect?.();
   });
 
   socket.on('new_inspection', (data) => {
-    if (handlers.onNewInspection) handlers.onNewInspection(data);
+    handlers.onNewInspection?.(data);
   });
 
   socket.on('status_update', (data) => {
-    if (handlers.onStatusUpdate) handlers.onStatusUpdate(data);
+    handlers.onStatusUpdate?.(data);
   });
 
   socket.on('connect_error', (error) => {
@@ -124,5 +118,5 @@ export function disconnectWebSocket() {
 }
 
 export function isWebSocketConnected() {
-  return socket && socket.connected;
+  return !!(socket && socket.connected);
 }
