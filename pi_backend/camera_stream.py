@@ -13,16 +13,16 @@ print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
 # =========================
-# PERFORMANCE SETTINGS
+# STREAM / PERFORMANCE SETTINGS
 # =========================
-FRAME_WIDTH = 640
-FRAME_HEIGHT = 480
+FRAME_WIDTH = 1280
+FRAME_HEIGHT = 720
 
-YOLO_IMGSZ = 256          # lower than 320 for faster inference
+YOLO_IMGSZ = 256
 YOLO_CONF = 0.25
-DETECT_EVERY_N_FRAMES = 4 # run detection every 4th frame
-JPEG_QUALITY = 55         # lower JPEG quality for faster encoding/smaller stream
-TARGET_FPS = 10           # cap MJPEG stream rate to reduce backlog
+DETECT_EVERY_N_FRAMES = 4
+JPEG_QUALITY = 55
+TARGET_FPS = 10
 
 FRAME_DELAY = 1.0 / TARGET_FPS
 
@@ -96,7 +96,7 @@ def mjpeg_generator():
                 frame_counter += 1
                 current_frame_number = frame_counter
 
-            # Only run YOLO periodically
+            # Run YOLO only every Nth frame
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
                 annotated = run_detection(frame)
                 with state_lock:
@@ -134,7 +134,7 @@ def mjpeg_generator():
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
 
-            # Soft FPS cap to prevent lag buildup
+            # Soft FPS cap
             loop_elapsed = time.time() - loop_start
             sleep_time = FRAME_DELAY - loop_elapsed
             if sleep_time > 0:
@@ -204,7 +204,7 @@ def home():
       <body style="text-align:center;background:#111;color:white;font-family:Arial">
         <h1>HideSpec Live Stream</h1>
         <p>Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT} | YOLO imgsz: {YOLO_IMGSZ} | Detect every: {DETECT_EVERY_N_FRAMES} frames</p>
-        <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
+        <img src="/video_feed" width="1100" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
     </html>
     """
