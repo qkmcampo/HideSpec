@@ -8,27 +8,20 @@ import threading
 app = Flask(__name__)
 
 print("=" * 55)
-print("HIDESPEC - ULTRA LOW LATENCY CAMERA STREAM SERVER")
+print("HIDESPEC - LOW LATENCY CAMERA STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
 # ============================================
-# ULTRA LOW-LATENCY SETTINGS
+# LOW-LAG SETTINGS
 # ============================================
-# Camera capture resolution (good visual quality)
-FRAME_WIDTH = 1280
-FRAME_HEIGHT = 720
+FRAME_WIDTH = 640
+FRAME_HEIGHT = 480
 
-# Detection settings (favor responsiveness)
 YOLO_IMGSZ = 224
 YOLO_CONF = 0.25
 DETECT_EVERY_N_FRAMES = 5
 
-# Detection runs on a smaller copy of the frame
-DETECTION_FRAME_WIDTH = 640
-DETECTION_FRAME_HEIGHT = 360
-
-# JPEG / stream settings
 JPEG_QUALITY = 50
 TARGET_FPS = 8
 FRAME_DELAY = 1.0 / TARGET_FPS
@@ -50,7 +43,6 @@ time.sleep(2)
 print(f"Camera started: {FRAME_WIDTH}x{FRAME_HEIGHT}")
 print("Capture loop started.\n")
 
-# Shared state
 last_raw_frame = None
 last_annotated = None
 last_detections = []
@@ -67,59 +59,25 @@ state_lock = threading.Lock()
 def run_detection(frame):
     global last_detections, last_inference_ms
 
-    # Downscale only for detection to keep inference fast
-    detect_frame = cv2.resize(
-        frame,
-        (DETECTION_FRAME_WIDTH, DETECTION_FRAME_HEIGHT),
-        interpolation=cv2.INTER_LINEAR
-    )
-
     start = time.time()
-    results = model(detect_frame, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, verbose=False)
+    results = model(frame, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, verbose=False)
     last_inference_ms = round((time.time() - start) * 1000, 1)
 
     result = results[0]
+    annotated = result.plot()
 
     detections = []
-    annotated = frame.copy()
-
     boxes = result.boxes
     if boxes is not None:
-        scale_x = FRAME_WIDTH / DETECTION_FRAME_WIDTH
-        scale_y = FRAME_HEIGHT / DETECTION_FRAME_HEIGHT
-
         for box in boxes:
             cls_id = int(box.cls[0].item())
             conf = float(box.conf[0].item())
             label = model.names.get(cls_id, str(cls_id))
-
-            x1, y1, x2, y2 = box.xyxy[0].tolist()
-            x1 = int(x1 * scale_x)
-            y1 = int(y1 * scale_y)
-            x2 = int(x2 * scale_x)
-            y2 = int(y2 * scale_y)
-
             detections.append({
                 "type": label,
                 "label": label,
                 "confidence": conf,
             })
-
-            # Draw box manually on full-size frame
-            color = (255, 165, 0)
-            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
-
-            text = f"{label} {conf:.2f}"
-            cv2.putText(
-                annotated,
-                text,
-                (x1, max(y1 - 10, 20)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.6,
-                color,
-                2,
-                cv2.LINE_AA
-            )
 
     last_detections = detections
     return annotated
@@ -140,7 +98,6 @@ def mjpeg_generator():
                 frame_counter += 1
                 current_frame_number = frame_counter
 
-            # Run detection only every Nth frame
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
                 annotated = run_detection(frame)
                 with state_lock:
@@ -153,7 +110,6 @@ def mjpeg_generator():
             with state_lock:
                 frame_to_send = last_annotated.copy()
 
-            # Convert RGB -> BGR for JPEG encoding
             frame_bgr = cv2.cvtColor(frame_to_send, cv2.COLOR_RGB2BGR)
 
             encode_start = time.time()
@@ -178,7 +134,6 @@ def mjpeg_generator():
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
 
-            # Soft FPS cap to avoid queue buildup and stale frames
             loop_elapsed = time.time() - loop_start
             sleep_time = FRAME_DELAY - loop_elapsed
             if sleep_time > 0:
@@ -211,7 +166,6 @@ def stream_status():
             "actual_stream_fps": stream_fps,
             "last_inference_ms": last_inference_ms,
             "last_encode_ms": last_encode_ms,
-            "detection_frame": f"{DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT}",
         },
     })
 
@@ -250,11 +204,11 @@ def home():
         <h1>HideSpec Live Stream</h1>
         <p>
           Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT} |
-          Detect frame: {DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT} |
           YOLO imgsz: {YOLO_IMGSZ} |
-          Detect every: {DETECT_EVERY_N_FRAMES} frames
+          Detect every: {DETECT_EVERY_N_FRAMES} frames |
+          JPEG quality: {JPEG_QUALITY}
         </p>
-        <img src="/video_feed" width="1100" style="max-width:100%;height:auto;border:1px solid #333;" />
+        <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
     </html>
     """
@@ -264,9 +218,8 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nUltra low-latency settings:")
+    print("\nLow-lag settings:")
     print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
-    print(f"- Detection frame: {DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT}")
     print(f"- YOLO imgsz: {YOLO_IMGSZ}")
     print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
     print(f"- JPEG quality: {JPEG_QUALITY}")

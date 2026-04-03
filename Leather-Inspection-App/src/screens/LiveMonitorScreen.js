@@ -193,9 +193,9 @@ export default function LiveMonitorScreen() {
 
   const FEED_WIDTHS = {
     small: 520,
-    medium: 760,
-    large: 980,
-    full: 1240,
+    medium: 700,
+    large: 860,
+    full: 1100,
   };
 
   const cardScale = useRef(new Animated.Value(1)).current;
@@ -429,7 +429,7 @@ export default function LiveMonitorScreen() {
               <View style={styles.feedInfoBar}>
                 <Text style={styles.feedInfoText}>
                   Pi Camera Module 3 · YOLOv8n ·{' '}
-                  {streamInfo?.resolution || '1280x720'}
+                  {streamInfo?.resolution || '640x480'}
                 </Text>
 
                 {streamInfo?.detections && (
@@ -753,7 +753,7 @@ const styles = StyleSheet.create({
 
   webFeedWrap: {
     width: '100%',
-    aspectRatio: 16 / 9,
+    aspectRatio: 4 / 3,
     alignSelf: 'center',
     backgroundColor: '#000',
   },
