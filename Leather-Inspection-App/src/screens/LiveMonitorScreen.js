@@ -73,7 +73,11 @@ function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
       ? [{ translateY: translate }]
       : [{ translateX: translate }];
 
-  return <Animated.View style={[{ opacity, transform }, style]}>{children}</Animated.View>;
+  return (
+    <Animated.View style={[{ opacity, transform }, style]}>
+      {children}
+    </Animated.View>
+  );
 }
 
 function PulseDot({ connected }) {
@@ -109,7 +113,12 @@ function PulseDot({ connected }) {
           },
         ]}
       />
-      <View style={[styles.pulseDot, { backgroundColor: connected ? C.good : C.bad }]} />
+      <View
+        style={[
+          styles.pulseDot,
+          { backgroundColor: connected ? C.good : C.bad },
+        ]}
+      />
     </View>
   );
 }
@@ -142,19 +151,15 @@ function LiveIndicator() {
   );
 }
 
-function WebStream({ height }) {
+function WebStream({ width }) {
   return (
-    <img
-      src={VIDEO_FEED_URL}
-      alt="Live Detection Feed"
-      style={{
-        width: '100%',
-        height,
-        objectFit: 'contain',
-        backgroundColor: '#000',
-        display: 'block',
-      }}
-    />
+    <View style={[styles.webFeedWrap, { maxWidth: width }]}>
+      <img
+        src={VIDEO_FEED_URL}
+        alt="Live Detection Feed"
+        style={styles.webFeedImage}
+      />
+    </View>
   );
 }
 
@@ -186,12 +191,27 @@ export default function LiveMonitorScreen() {
     full: 550,
   };
 
+  const FEED_WIDTHS = {
+    small: 520,
+    medium: 700,
+    large: 860,
+    full: 1100,
+  };
+
   const cardScale = useRef(new Animated.Value(1)).current;
 
   const animateNewInspection = () => {
     Animated.sequence([
-      Animated.spring(cardScale, { toValue: 1.02, friction: 3, useNativeDriver: true }),
-      Animated.spring(cardScale, { toValue: 1, friction: 5, useNativeDriver: true }),
+      Animated.spring(cardScale, {
+        toValue: 1.02,
+        friction: 3,
+        useNativeDriver: true,
+      }),
+      Animated.spring(cardScale, {
+        toValue: 1,
+        friction: 5,
+        useNativeDriver: true,
+      }),
     ]).start();
   };
 
@@ -244,7 +264,7 @@ export default function LiveMonitorScreen() {
     });
 
     const interval = setInterval(loadData, 10000);
-    const streamInterval = setInterval(fetchStreamStatus, 5000);
+    const streamInterval = setInterval(fetchStreamStatus, 10000);
 
     return () => {
       clearInterval(interval);
@@ -284,7 +304,12 @@ export default function LiveMonitorScreen() {
           <View style={styles.statusLeft}>
             <PulseDot connected={connected} />
             <View style={{ marginLeft: 16 }}>
-              <Text style={[styles.statusLabel, { color: connected ? C.good : C.bad }]}>
+              <Text
+                style={[
+                  styles.statusLabel,
+                  { color: connected ? C.good : C.bad },
+                ]}
+              >
                 {connected ? 'SYSTEM ONLINE' : 'RECONNECTING'}
               </Text>
               <Text style={styles.statusSub}>
@@ -296,7 +321,9 @@ export default function LiveMonitorScreen() {
 
           {systemStatus?.session && (
             <View style={styles.statusRight}>
-              <Text style={styles.statusCount}>{systemStatus.session.total_inspected || 0}</Text>
+              <Text style={styles.statusCount}>
+                {systemStatus.session.total_inspected || 0}
+              </Text>
               <Text style={styles.statusCountLabel}>TOTAL</Text>
             </View>
           )}
@@ -306,13 +333,23 @@ export default function LiveMonitorScreen() {
       {systemStatus?.session && (
         <FadeSlideIn delay={100} direction="up">
           <View style={styles.quickStats}>
-            <View style={[styles.quickStatItem, { borderRightWidth: 1, borderRightColor: C.border }]}>
+            <View
+              style={[
+                styles.quickStatItem,
+                { borderRightWidth: 1, borderRightColor: C.border },
+              ]}
+            >
               <Text style={[styles.quickStatValue, { color: C.good }]}>
                 {systemStatus.session.good_count || 0}
               </Text>
               <Text style={styles.quickStatLabel}>PASSED</Text>
             </View>
-            <View style={[styles.quickStatItem, { borderRightWidth: 1, borderRightColor: C.border }]}>
+            <View
+              style={[
+                styles.quickStatItem,
+                { borderRightWidth: 1, borderRightColor: C.border },
+              ]}
+            >
               <Text style={[styles.quickStatValue, { color: C.bad }]}>
                 {systemStatus.session.bad_count || 0}
               </Text>
@@ -334,10 +371,18 @@ export default function LiveMonitorScreen() {
             <Text style={styles.sectionDot}>●</Text>
             <Text style={styles.sectionTitle}>LIVE DETECTION FEED</Text>
             <TouchableOpacity
-              style={[styles.toggleBtn, showLiveFeed && styles.toggleBtnActive]}
+              style={[
+                styles.toggleBtn,
+                showLiveFeed && styles.toggleBtnActive,
+              ]}
               onPress={() => setShowLiveFeed(!showLiveFeed)}
             >
-              <Text style={[styles.toggleText, showLiveFeed && styles.toggleTextActive]}>
+              <Text
+                style={[
+                  styles.toggleText,
+                  showLiveFeed && styles.toggleTextActive,
+                ]}
+              >
                 {showLiveFeed ? 'HIDE' : 'SHOW'}
               </Text>
             </TouchableOpacity>
@@ -351,25 +396,40 @@ export default function LiveMonitorScreen() {
                 {['small', 'medium', 'large', 'full'].map((size) => (
                   <TouchableOpacity
                     key={`size-${size}`}
-                    style={[styles.sizeBtn, feedSize === size && styles.sizeBtnActive]}
+                    style={[
+                      styles.sizeBtn,
+                      feedSize === size && styles.sizeBtnActive,
+                    ]}
                     onPress={() => setFeedSize(size)}
                   >
-                    <Text style={[styles.sizeBtnText, feedSize === size && styles.sizeBtnTextActive]}>
-                      {size === 'small' ? 'S' : size === 'medium' ? 'M' : size === 'large' ? 'L' : 'XL'}
+                    <Text
+                      style={[
+                        styles.sizeBtnText,
+                        feedSize === size && styles.sizeBtnTextActive,
+                      ]}
+                    >
+                      {size === 'small'
+                        ? 'S'
+                        : size === 'medium'
+                        ? 'M'
+                        : size === 'large'
+                        ? 'L'
+                        : 'XL'}
                     </Text>
                   </TouchableOpacity>
                 ))}
               </View>
 
               {Platform.OS === 'web' ? (
-                <WebStream height={FEED_HEIGHTS[feedSize]} />
+                <WebStream width={FEED_WIDTHS[feedSize]} />
               ) : (
                 <NativeSnapshot height={FEED_HEIGHTS[feedSize]} />
               )}
 
               <View style={styles.feedInfoBar}>
                 <Text style={styles.feedInfoText}>
-                  Pi Camera Module 3 · YOLOv8n · {streamInfo?.resolution || '640x480'}
+                  Pi Camera Module 3 · YOLOv8n ·{' '}
+                  {streamInfo?.resolution || '640x480'}
                 </Text>
 
                 {streamInfo?.detections && (
@@ -420,7 +480,9 @@ export default function LiveMonitorScreen() {
           </View>
 
           {latestResult ? (
-            <Animated.View style={[styles.latestCard, { transform: [{ scale: cardScale }] }]}>
+            <Animated.View
+              style={[styles.latestCard, { transform: [{ scale: cardScale }] }]}
+            >
               <View style={styles.latestHeader}>
                 <View>
                   <Text style={styles.hideId}>{latestResult.hide_id}</Text>
@@ -434,7 +496,10 @@ export default function LiveMonitorScreen() {
                       : '—'}
                   </Text>
                 </View>
-                <StatusBadge classification={latestResult.classification} size="large" />
+                <StatusBadge
+                  classification={latestResult.classification}
+                  size="large"
+                />
               </View>
 
               <View
@@ -452,7 +517,10 @@ export default function LiveMonitorScreen() {
                   style={[
                     styles.resultBarText,
                     {
-                      color: latestResult.classification === 'Good' ? C.good : C.bad,
+                      color:
+                        latestResult.classification === 'Good'
+                          ? C.good
+                          : C.bad,
                     },
                   ]}
                 >
@@ -465,13 +533,19 @@ export default function LiveMonitorScreen() {
               <View style={styles.defectsHeader}>
                 <Text style={styles.defectsTitle}>DETECTED DEFECTS</Text>
                 <View style={styles.defectCountBadge}>
-                  <Text style={styles.defectCountText}>{latestResult.total_defects || 0}</Text>
+                  <Text style={styles.defectCountText}>
+                    {latestResult.total_defects || 0}
+                  </Text>
                 </View>
               </View>
 
               {latestResult.defects && latestResult.defects.length > 0 ? (
                 latestResult.defects.map((defect, index) => (
-                  <FadeSlideIn key={`defect-${index}-${defect.type}`} delay={300 + index * 100} direction="left">
+                  <FadeSlideIn
+                    key={`defect-${index}-${defect.type}`}
+                    delay={300 + index * 100}
+                    direction="left"
+                  >
                     <DefectCard defect={defect} />
                   </FadeSlideIn>
                 ))
@@ -479,7 +553,9 @@ export default function LiveMonitorScreen() {
                 <View style={styles.noDefectsBox}>
                   <Text style={styles.noDefectsIcon}>✓</Text>
                   <Text style={styles.noDefectsText}>No defects detected</Text>
-                  <Text style={styles.noDefectsSub}>Surface inspection passed all checks</Text>
+                  <Text style={styles.noDefectsSub}>
+                    Surface inspection passed all checks
+                  </Text>
                 </View>
               )}
             </Animated.View>
@@ -490,7 +566,8 @@ export default function LiveMonitorScreen() {
               </View>
               <Text style={styles.emptyTitle}>AWAITING INSPECTION</Text>
               <Text style={styles.emptySub}>
-                Feed a leather hide through the machine{'\n'}to begin quality analysis
+                Feed a leather hide through the machine{'\n'}to begin quality
+                analysis
               </Text>
             </View>
           )}
@@ -507,20 +584,28 @@ export default function LiveMonitorScreen() {
 
           {recentHistory.length > 0 ? (
             recentHistory.map((item, index) => (
-              <FadeSlideIn key={`history-${index}-${item.hide_id}`} delay={500 + index * 50} direction="right">
+              <FadeSlideIn
+                key={`history-${index}-${item.hide_id}`}
+                delay={500 + index * 50}
+                direction="right"
+              >
                 <TouchableOpacity style={styles.historyItem} activeOpacity={0.6}>
                   <View
                     style={[
                       styles.historyIndicator,
                       {
-                        backgroundColor: item.classification === 'Good' ? C.good : C.bad,
+                        backgroundColor:
+                          item.classification === 'Good' ? C.good : C.bad,
                       },
                     ]}
                   />
                   <View style={styles.historyContent}>
                     <View style={styles.historyTop}>
                       <Text style={styles.historyHideId}>{item.hide_id}</Text>
-                      <StatusBadge classification={item.classification} size="small" />
+                      <StatusBadge
+                        classification={item.classification}
+                        size="small"
+                      />
                     </View>
                     <View style={styles.historyBottom}>
                       <Text style={styles.historyTime}>
@@ -553,12 +638,33 @@ export default function LiveMonitorScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: C.bg },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg },
-  loadingText: { marginTop: 16, fontSize: 12, color: C.accent, fontWeight: '800', letterSpacing: 2 },
+  center: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: C.bg,
+  },
+  loadingText: {
+    marginTop: 16,
+    fontSize: 12,
+    color: C.accent,
+    fontWeight: '800',
+    letterSpacing: 2,
+  },
   loadingSub: { marginTop: 4, fontSize: 12, color: C.muted },
 
-  pulseContainer: { width: 24, height: 24, justifyContent: 'center', alignItems: 'center' },
-  pulseRing: { position: 'absolute', width: 24, height: 24, borderRadius: 12 },
+  pulseContainer: {
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  pulseRing: {
+    position: 'absolute',
+    width: 24,
+    height: 24,
+    borderRadius: 12,
+  },
   pulseDot: { width: 10, height: 10, borderRadius: 5 },
 
   statusBar: {
@@ -576,7 +682,12 @@ const styles = StyleSheet.create({
   statusSub: { fontSize: 10, color: C.muted, marginTop: 2, letterSpacing: 0.3 },
   statusRight: { alignItems: 'center' },
   statusCount: { fontSize: 22, fontWeight: '900', color: C.text },
-  statusCountLabel: { fontSize: 8, color: C.muted, fontWeight: '700', letterSpacing: 1.5 },
+  statusCountLabel: {
+    fontSize: 8,
+    color: C.muted,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+  },
 
   quickStats: {
     flexDirection: 'row',
@@ -586,12 +697,24 @@ const styles = StyleSheet.create({
   },
   quickStatItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
   quickStatValue: { fontSize: 20, fontWeight: '900' },
-  quickStatLabel: { fontSize: 8, color: C.muted, fontWeight: '700', letterSpacing: 1.5, marginTop: 2 },
+  quickStatLabel: {
+    fontSize: 8,
+    color: C.muted,
+    fontWeight: '700',
+    letterSpacing: 1.5,
+    marginTop: 2,
+  },
 
   section: { paddingHorizontal: 16, marginTop: 20 },
   sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
   sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
-  sectionTitle: { fontSize: 11, fontWeight: '800', color: C.dim, letterSpacing: 1.5, flex: 1 },
+  sectionTitle: {
+    fontSize: 11,
+    fontWeight: '800',
+    color: C.dim,
+    letterSpacing: 1.5,
+    flex: 1,
+  },
   sectionCount: { fontSize: 10, color: C.muted },
 
   toggleBtn: {
@@ -602,8 +725,16 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     backgroundColor: C.bg,
   },
-  toggleBtnActive: { borderColor: C.accent, backgroundColor: 'rgba(240,136,62,0.1)' },
-  toggleText: { fontSize: 9, fontWeight: '800', color: C.muted, letterSpacing: 1 },
+  toggleBtnActive: {
+    borderColor: C.accent,
+    backgroundColor: 'rgba(240,136,62,0.1)',
+  },
+  toggleText: {
+    fontSize: 9,
+    fontWeight: '800',
+    color: C.muted,
+    letterSpacing: 1,
+  },
   toggleTextActive: { color: C.accent },
 
   feedCard: {
@@ -614,8 +745,24 @@ const styles = StyleSheet.create({
     borderColor: C.border,
     position: 'relative',
   },
+
   feedImage: {
     width: '100%',
+    backgroundColor: '#000',
+  },
+
+  webFeedWrap: {
+    width: '100%',
+    aspectRatio: 4 / 3,
+    alignSelf: 'center',
+    backgroundColor: '#000',
+  },
+
+  webFeedImage: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'contain',
+    display: 'block',
     backgroundColor: '#000',
   },
 
@@ -729,10 +876,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255,255,255,0.04)',
   },
-  resultBarText: { fontSize: 10, fontWeight: '800', letterSpacing: 1, textAlign: 'center' },
+  resultBarText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    textAlign: 'center',
+  },
 
-  defectsHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 10, marginTop: 4 },
-  defectsTitle: { fontSize: 10, fontWeight: '800', color: C.dim, letterSpacing: 1.5, flex: 1 },
+  defectsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 10,
+    marginTop: 4,
+  },
+  defectsTitle: {
+    fontSize: 10,
+    fontWeight: '800',
+    color: C.dim,
+    letterSpacing: 1.5,
+    flex: 1,
+  },
   defectCountBadge: {
     backgroundColor: 'rgba(240,136,62,0.15)',
     borderRadius: 10,
@@ -775,8 +938,19 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(240,136,62,0.2)',
   },
   emptyIcon: { fontSize: 28, color: C.accent },
-  emptyTitle: { fontSize: 12, fontWeight: '800', color: C.dim, letterSpacing: 2 },
-  emptySub: { fontSize: 12, color: C.muted, textAlign: 'center', marginTop: 8, lineHeight: 18 },
+  emptyTitle: {
+    fontSize: 12,
+    fontWeight: '800',
+    color: C.dim,
+    letterSpacing: 2,
+  },
+  emptySub: {
+    fontSize: 12,
+    color: C.muted,
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 18,
+  },
 
   historyItem: {
     backgroundColor: C.card,
@@ -789,10 +963,23 @@ const styles = StyleSheet.create({
   },
   historyIndicator: { width: 3 },
   historyContent: { flex: 1, padding: 12 },
-  historyTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  historyTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
   historyHideId: { fontSize: 14, fontWeight: '700', color: C.text },
-  historyBottom: { flexDirection: 'row', justifyContent: 'space-between', marginTop: 6 },
+  historyBottom: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 6,
+  },
   historyTime: { fontSize: 11, color: C.muted, fontFamily: 'monospace' },
   historyDefects: { fontSize: 11, color: C.dim },
-  noHistory: { fontSize: 12, color: C.muted, textAlign: 'center', paddingVertical: 30 },
+  noHistory: {
+    fontSize: 12,
+    color: C.muted,
+    textAlign: 'center',
+    paddingVertical: 30,
+  },
 });
