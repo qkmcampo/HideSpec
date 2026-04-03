@@ -1,7 +1,13 @@
 """
 Leather Hide Inspection — API Server
-Runs on Raspberry Pi 5 to serve inspection data to the mobile app.
+Runs on Raspberry Pi 5 to serve inspection data to the mobile/web app.
 Team 10 — TIP QC Capstone Project
+
+Install requirements:
+    pip install flask flask-cors flask-socketio --break-system-packages
+
+Run: python3 api_server.py
+API: http://0.0.0.0:5000
 """
 
 from flask import Flask, jsonify, request, send_file
@@ -13,8 +19,10 @@ import json
 from datetime import datetime, timedelta
 
 app = Flask(__name__)
-CORS(app)
-socketio = SocketIO(app, cors_allowed_origins="*")
+
+# Allow ALL origins — critical for mobile/web app connection
+CORS(app, resources={r"/*": {"origins": "*"}})
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
 
 db = InspectionDB()
 
@@ -29,7 +37,7 @@ def get_status():
         "system": {
             "model": "YOLOv8n",
             "platform": "Raspberry Pi 5",
-            "camera": "connected",
+            "camera": "Pi Camera Module 3",
             "arduino": "connected"
         },
         "session": {
@@ -44,13 +52,6 @@ def get_status():
 # ─── Inspection Records ────────────────────────────────────────
 @app.route('/api/inspections', methods=['GET'])
 def get_inspections():
-    """
-    Returns inspection history.
-    Query params:
-      - limit (int): number of records (default 50)
-      - offset (int): pagination offset (default 0)
-      - classification (str): filter by 'Good' or 'Bad'
-    """
     limit = request.args.get('limit', 50, type=int)
     offset = request.args.get('offset', 0, type=int)
     classification = request.args.get('classification', None)
@@ -68,7 +69,6 @@ def get_inspections():
 
 @app.route('/api/inspections/<int:inspection_id>', methods=['GET'])
 def get_inspection_detail(inspection_id):
-    """Returns detailed info for a single inspection."""
     inspection = db.get_inspection(inspection_id)
     if inspection:
         return jsonify(inspection)
@@ -77,7 +77,6 @@ def get_inspection_detail(inspection_id):
 
 @app.route('/api/inspections/latest', methods=['GET'])
 def get_latest_inspection():
-    """Returns the most recent inspection result."""
     inspections = db.get_inspections(limit=1)
     if inspections:
         return jsonify(inspections[0])
@@ -87,11 +86,6 @@ def get_latest_inspection():
 # ─── Analytics ──────────────────────────────────────────────────
 @app.route('/api/analytics', methods=['GET'])
 def get_analytics():
-    """
-    Returns aggregated analytics data.
-    Query params:
-      - period (str): 'today', 'week', 'month', 'all' (default 'today')
-    """
     period = request.args.get('period', 'today')
     analytics = db.get_analytics(period=period)
     return jsonify(analytics)
@@ -99,18 +93,12 @@ def get_analytics():
 
 @app.route('/api/analytics/defect-distribution', methods=['GET'])
 def get_defect_distribution():
-    """Returns count of each defect type."""
     distribution = db.get_defect_distribution()
     return jsonify({"defects": distribution})
 
 
 @app.route('/api/analytics/timeline', methods=['GET'])
 def get_timeline():
-    """
-    Returns inspection counts over time for charting.
-    Query params:
-      - period (str): 'today' (hourly), 'week' (daily), 'month' (daily)
-    """
     period = request.args.get('period', 'today')
     timeline = db.get_timeline(period=period)
     return jsonify({"timeline": timeline})
@@ -119,7 +107,6 @@ def get_timeline():
 # ─── Inspection Image ───────────────────────────────────────────
 @app.route('/api/inspections/<int:inspection_id>/image', methods=['GET'])
 def get_inspection_image(inspection_id):
-    """Serves the captured image for a specific inspection."""
     inspection = db.get_inspection(inspection_id)
     if inspection and inspection.get("image_path"):
         image_path = inspection["image_path"]
@@ -128,11 +115,22 @@ def get_inspection_image(inspection_id):
     return jsonify({"error": "Image not found"}), 404
 
 
+# ─── Health Check (for debugging) ──────────────────────────────
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """Simple health check endpoint for debugging connection issues."""
+    return jsonify({
+        "status": "ok",
+        "server": "api_server.py",
+        "port": 5000,
+        "timestamp": datetime.now().isoformat(),
+    })
+
+
 # ─── WebSocket Events ───────────────────────────────────────────
 @socketio.on('connect')
 def handle_connect():
-    print("[WS] Mobile client connected")
-    # Send current status on connect
+    print("[WS] Mobile/web client connected")
     stats = db.get_analytics()
     socketio.emit('status_update', {
         "total_inspected": stats["total_inspections"],
@@ -143,16 +141,15 @@ def handle_connect():
 
 @socketio.on('disconnect')
 def handle_disconnect():
-    print("[WS] Mobile client disconnected")
+    print("[WS] Mobile/web client disconnected")
 
 
 def notify_new_inspection(inspection_data):
     """
-    Call this from your main inspection pipeline after each hide is processed.
-    It pushes the result to all connected mobile clients in real-time.
+    Call this from inference.py after each hide is processed.
+    Pushes result to all connected mobile/web clients.
     """
     socketio.emit('new_inspection', inspection_data)
-    # Also send updated stats
     stats = db.get_analytics()
     socketio.emit('status_update', {
         "total_inspected": stats["total_inspections"],
@@ -163,13 +160,21 @@ def notify_new_inspection(inspection_data):
 
 # ─── Main ───────────────────────────────────────────────────────
 if __name__ == '__main__':
-    print("=" * 50)
-    print("Leather Inspection API Server")
-    print("Team 10 — TIP QC Capstone")
-    print("=" * 50)
-    print("Starting on http://0.0.0.0:5000")
-    print("Make sure your phone is on the same WiFi network.")
+    print()
+    print("=" * 55)
+    print("  HIDESPEC — DATA API SERVER")
+    print("  Leather Hide Inspection System")
+    print("  Team 10 · TIP QC")
+    print("=" * 55)
+    print()
+    print("  API running at:     http://0.0.0.0:5000")
+    print("  Health check:       http://0.0.0.0:5000/api/health")
+    print("  System status:      http://0.0.0.0:5000/api/status")
+    print("  Inspections:        http://0.0.0.0:5000/api/inspections")
+    print("  Analytics:          http://0.0.0.0:5000/api/analytics")
+    print()
+    print("  Make sure your phone/browser is on the same WiFi.")
+    print("=" * 55)
     print()
 
-    # Run with WebSocket support
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False)
+    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
