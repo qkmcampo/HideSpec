@@ -8,22 +8,29 @@ import threading
 app = Flask(__name__)
 
 print("=" * 55)
-print("HIDESPEC - LIVE CAMERA STREAM SERVER")
+print("HIDESPEC - ULTRA LOW LATENCY CAMERA STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
-# =========================
-# STREAM / PERFORMANCE SETTINGS
-# =========================
+# ============================================
+# ULTRA LOW-LATENCY SETTINGS
+# ============================================
+# Camera capture resolution (good visual quality)
 FRAME_WIDTH = 1280
 FRAME_HEIGHT = 720
 
-YOLO_IMGSZ = 256
+# Detection settings (favor responsiveness)
+YOLO_IMGSZ = 224
 YOLO_CONF = 0.25
-DETECT_EVERY_N_FRAMES = 4
-JPEG_QUALITY = 55
-TARGET_FPS = 10
+DETECT_EVERY_N_FRAMES = 5
 
+# Detection runs on a smaller copy of the frame
+DETECTION_FRAME_WIDTH = 640
+DETECTION_FRAME_HEIGHT = 360
+
+# JPEG / stream settings
+JPEG_QUALITY = 50
+TARGET_FPS = 8
 FRAME_DELAY = 1.0 / TARGET_FPS
 
 print("\nLoading YOLO model...")
@@ -34,7 +41,8 @@ print(f"Classes: {model.names}")
 print("Starting camera...")
 picam2 = Picamera2()
 config = picam2.create_video_configuration(
-    main={"size": (FRAME_WIDTH, FRAME_HEIGHT), "format": "RGB888"}
+    main={"size": (FRAME_WIDTH, FRAME_HEIGHT), "format": "RGB888"},
+    buffer_count=2
 )
 picam2.configure(config)
 picam2.start()
@@ -43,10 +51,11 @@ print(f"Camera started: {FRAME_WIDTH}x{FRAME_HEIGHT}")
 print("Capture loop started.\n")
 
 # Shared state
-last_annotated = None
 last_raw_frame = None
+last_annotated = None
 last_detections = []
 frame_counter = 0
+
 last_inference_ms = 0.0
 last_encode_ms = 0.0
 stream_fps = 0.0
@@ -58,31 +67,66 @@ state_lock = threading.Lock()
 def run_detection(frame):
     global last_detections, last_inference_ms
 
+    # Downscale only for detection to keep inference fast
+    detect_frame = cv2.resize(
+        frame,
+        (DETECTION_FRAME_WIDTH, DETECTION_FRAME_HEIGHT),
+        interpolation=cv2.INTER_LINEAR
+    )
+
     start = time.time()
-    results = model(frame, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, verbose=False)
+    results = model(detect_frame, imgsz=YOLO_IMGSZ, conf=YOLO_CONF, verbose=False)
     last_inference_ms = round((time.time() - start) * 1000, 1)
 
-    annotated = results[0].plot()
+    result = results[0]
 
     detections = []
-    boxes = results[0].boxes
+    annotated = frame.copy()
+
+    boxes = result.boxes
     if boxes is not None:
+        scale_x = FRAME_WIDTH / DETECTION_FRAME_WIDTH
+        scale_y = FRAME_HEIGHT / DETECTION_FRAME_HEIGHT
+
         for box in boxes:
             cls_id = int(box.cls[0].item())
             conf = float(box.conf[0].item())
             label = model.names.get(cls_id, str(cls_id))
+
+            x1, y1, x2, y2 = box.xyxy[0].tolist()
+            x1 = int(x1 * scale_x)
+            y1 = int(y1 * scale_y)
+            x2 = int(x2 * scale_x)
+            y2 = int(y2 * scale_y)
+
             detections.append({
                 "type": label,
                 "label": label,
                 "confidence": conf,
             })
 
+            # Draw box manually on full-size frame
+            color = (255, 165, 0)
+            cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
+
+            text = f"{label} {conf:.2f}"
+            cv2.putText(
+                annotated,
+                text,
+                (x1, max(y1 - 10, 20)),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6,
+                color,
+                2,
+                cv2.LINE_AA
+            )
+
     last_detections = detections
     return annotated
 
 
 def mjpeg_generator():
-    global last_annotated, last_raw_frame, frame_counter
+    global last_raw_frame, last_annotated, frame_counter
     global last_encode_ms, stream_fps, last_stream_time
 
     while True:
@@ -96,7 +140,7 @@ def mjpeg_generator():
                 frame_counter += 1
                 current_frame_number = frame_counter
 
-            # Run YOLO only every Nth frame
+            # Run detection only every Nth frame
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
                 annotated = run_detection(frame)
                 with state_lock:
@@ -109,7 +153,7 @@ def mjpeg_generator():
             with state_lock:
                 frame_to_send = last_annotated.copy()
 
-            # Convert RGB -> BGR for OpenCV JPEG encoding
+            # Convert RGB -> BGR for JPEG encoding
             frame_bgr = cv2.cvtColor(frame_to_send, cv2.COLOR_RGB2BGR)
 
             encode_start = time.time()
@@ -134,7 +178,7 @@ def mjpeg_generator():
                 b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
 
-            # Soft FPS cap
+            # Soft FPS cap to avoid queue buildup and stale frames
             loop_elapsed = time.time() - loop_start
             sleep_time = FRAME_DELAY - loop_elapsed
             if sleep_time > 0:
@@ -142,7 +186,7 @@ def mjpeg_generator():
 
         except Exception as e:
             print(f"Stream error: {e}")
-            time.sleep(0.1)
+            time.sleep(0.05)
 
 
 @app.route("/video_feed")
@@ -167,6 +211,7 @@ def stream_status():
             "actual_stream_fps": stream_fps,
             "last_inference_ms": last_inference_ms,
             "last_encode_ms": last_encode_ms,
+            "detection_frame": f"{DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT}",
         },
     })
 
@@ -186,7 +231,7 @@ def snapshot():
         ok, buffer = cv2.imencode(
             ".jpg",
             frame_bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), 75]
+            [int(cv2.IMWRITE_JPEG_QUALITY), 70]
         )
         if not ok:
             return ("Snapshot encode failed", 500)
@@ -203,7 +248,12 @@ def home():
     <html>
       <body style="text-align:center;background:#111;color:white;font-family:Arial">
         <h1>HideSpec Live Stream</h1>
-        <p>Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT} | YOLO imgsz: {YOLO_IMGSZ} | Detect every: {DETECT_EVERY_N_FRAMES} frames</p>
+        <p>
+          Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT} |
+          Detect frame: {DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT} |
+          YOLO imgsz: {YOLO_IMGSZ} |
+          Detect every: {DETECT_EVERY_N_FRAMES} frames
+        </p>
         <img src="/video_feed" width="1100" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
     </html>
@@ -214,8 +264,9 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nOptimization settings:")
+    print("\nUltra low-latency settings:")
     print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
+    print(f"- Detection frame: {DETECTION_FRAME_WIDTH}x{DETECTION_FRAME_HEIGHT}")
     print(f"- YOLO imgsz: {YOLO_IMGSZ}")
     print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
     print(f"- JPEG quality: {JPEG_QUALITY}")
