@@ -1,20 +1,22 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  View, Text, StyleSheet, ScrollView, RefreshControl,
-  Dimensions, TouchableOpacity, ActivityIndicator, Animated,
+  View,
+  Text,
+  StyleSheet,
+  ScrollView,
+  RefreshControl,
+  Dimensions,
+  TouchableOpacity,
+  ActivityIndicator,
+  Animated,
 } from 'react-native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 import StatCard from '../components/StatCard';
 import { getAnalytics, getDefectDistribution, getTimeline } from '../services/inspectionService';
+import { useAppTheme } from '../theme/AppThemeContext';
 
 const SCREEN_WIDTH = Dimensions.get('window').width;
 const CHART_WIDTH = SCREEN_WIDTH - 48;
-
-const C = {
-  bg: '#0d1117', card: '#161b22', border: '#30363d',
-  text: '#e6edf3', dim: '#8b949e', muted: '#484f58',
-  accent: '#f0883e', good: '#3fb950', bad: '#f85149', blue: '#58a6ff',
-};
 
 const PERIODS = [
   { key: 'today', label: 'TODAY' },
@@ -23,12 +25,19 @@ const PERIODS = [
   { key: 'all', label: 'ALL' },
 ];
 
-const DEFECT_COLORS = [C.accent, C.bad, C.blue, C.dim, C.good];
-
-// Animated wrapper
 function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
   const opacity = useRef(new Animated.Value(0)).current;
-  const translate = useRef(new Animated.Value(direction === 'up' ? 40 : direction === 'down' ? -40 : direction === 'left' ? 40 : -40)).current;
+  const translate = useRef(
+    new Animated.Value(
+      direction === 'up'
+        ? 40
+        : direction === 'down'
+        ? -40
+        : direction === 'left'
+        ? 40
+        : -40
+    )
+  ).current;
 
   useEffect(() => {
     Animated.sequence([
@@ -40,37 +49,40 @@ function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
     ]).start();
   }, []);
 
-  const transform = direction === 'up' || direction === 'down'
-    ? [{ translateY: translate }]
-    : [{ translateX: translate }];
+  const transform =
+    direction === 'up' || direction === 'down'
+      ? [{ translateY: translate }]
+      : [{ translateX: translate }];
 
-  return (
-    <Animated.View style={[{ opacity, transform }, style]}>
-      {children}
-    </Animated.View>
-  );
+  return <Animated.View style={[{ opacity, transform }, style]}>{children}</Animated.View>;
 }
 
-// Animated counter
 function AnimatedNumber({ value, color }) {
-  const animValue = useRef(new Animated.Value(0)).current;
   const scale = useRef(new Animated.Value(0.5)).current;
 
   useEffect(() => {
-    Animated.parallel([
-      Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }),
-      Animated.timing(animValue, { toValue: 1, duration: 600, useNativeDriver: true }),
-    ]).start();
+    Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }).start();
   }, [value]);
 
   return (
-    <Animated.Text style={[{ transform: [{ scale }], color, fontSize: 28, fontWeight: '900' }]}>
+    <Animated.Text
+      style={{
+        transform: [{ scale }],
+        color,
+        fontSize: 28,
+        fontWeight: '900',
+      }}
+    >
       {value}
     </Animated.Text>
   );
 }
 
 export default function AnalyticsScreen() {
+  const { theme: C } = useAppTheme();
+  const styles = getStyles(C);
+  const DEFECT_COLORS = [C.accent, C.bad, C.blue, C.dim, C.good];
+
   const [period, setPeriod] = useState('today');
   const [analytics, setAnalytics] = useState(null);
   const [defectDist, setDefectDist] = useState([]);
@@ -78,8 +90,8 @@ export default function AnalyticsScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  // Gauge animation
   const gaugeWidth = useRef(new Animated.Value(0)).current;
+  const periodScale = useRef(new Animated.Value(1)).current;
 
   const loadData = useCallback(async () => {
     try {
@@ -88,25 +100,36 @@ export default function AnalyticsScreen() {
         getDefectDistribution(),
         getTimeline(period === 'all' ? 'month' : period),
       ]);
+
       if (a) {
         setAnalytics(a);
-        // Animate gauge bar
         Animated.spring(gaugeWidth, {
           toValue: a.pass_rate || 0,
-          friction: 6, useNativeDriver: false,
+          friction: 6,
+          useNativeDriver: false,
         }).start();
       }
+
       if (d?.defects) setDefectDist(d.defects);
       if (t?.timeline) setTimeline(t.timeline);
-    } catch (err) { console.error(err); }
-    finally { setLoading(false); setRefreshing(false); }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
   }, [period]);
 
-  useEffect(() => { setLoading(true); loadData(); }, [period, loadData]);
-  useEffect(() => { const i = setInterval(loadData, 30000); return () => clearInterval(i); }, [loadData]);
+  useEffect(() => {
+    setLoading(true);
+    loadData();
+  }, [period, loadData]);
 
-  // Period button animation
-  const periodScale = useRef(new Animated.Value(1)).current;
+  useEffect(() => {
+    const i = setInterval(loadData, 30000);
+    return () => clearInterval(i);
+  }, [loadData]);
+
   const animatePeriodPress = () => {
     Animated.sequence([
       Animated.timing(periodScale, { toValue: 0.95, duration: 100, useNativeDriver: true }),
@@ -115,23 +138,32 @@ export default function AnalyticsScreen() {
   };
 
   const barChartData = {
-    labels: timeline.length > 0 ? timeline.map(t => t.time_label || '') : ['—'],
+    labels: timeline.length > 0 ? timeline.map((t) => t.time_label || '') : ['—'],
     datasets: [
-      { data: timeline.length > 0 ? timeline.map(t => t.good || 0) : [0], color: () => C.good },
-      { data: timeline.length > 0 ? timeline.map(t => t.bad || 0) : [0], color: () => C.bad },
+      { data: timeline.length > 0 ? timeline.map((t) => t.good || 0) : [0], color: () => C.good },
+      { data: timeline.length > 0 ? timeline.map((t) => t.bad || 0) : [0], color: () => C.bad },
     ],
     legend: ['Passed', 'Failed'],
   };
 
-  const pieData = defectDist.length > 0
-    ? defectDist.map((d, i) => ({
-        name: (d.type || '?').replace(/_/g, ' '),
-        count: d.count,
-        color: DEFECT_COLORS[i % DEFECT_COLORS.length],
-        legendFontColor: C.dim,
-        legendFontSize: 11,
-      }))
-    : [{ name: 'None', count: 1, color: C.muted, legendFontColor: C.muted, legendFontSize: 11 }];
+  const pieData =
+    defectDist.length > 0
+      ? defectDist.map((d, i) => ({
+          name: (d.type || '?').replace(/_/g, ' '),
+          count: d.count,
+          color: DEFECT_COLORS[i % DEFECT_COLORS.length],
+          legendFontColor: C.dim,
+          legendFontSize: 11,
+        }))
+      : [
+          {
+            name: 'None',
+            count: 1,
+            color: C.muted,
+            legendFontColor: C.muted,
+            legendFontSize: 11,
+          },
+        ];
 
   if (loading) {
     return (
@@ -151,19 +183,33 @@ export default function AnalyticsScreen() {
     <ScrollView
       style={styles.container}
       refreshControl={
-        <RefreshControl refreshing={refreshing} onRefresh={() => { setRefreshing(true); loadData(); }}
-          tintColor={C.accent} colors={[C.accent]}
+        <RefreshControl
+          refreshing={refreshing}
+          onRefresh={() => {
+            setRefreshing(true);
+            loadData();
+          }}
+          tintColor={C.accent}
+          colors={[C.accent]}
         />
       }
     >
-      {/* Period Selector */}
       <FadeSlideIn delay={0} direction="down">
         <View style={styles.periodBar}>
-          {PERIODS.map(opt => (
-            <Animated.View key={`period-${opt.key}`} style={{ flex: 1, transform: [{ scale: period === opt.key ? periodScale : 1 }] }}>
+          {PERIODS.map((opt) => (
+            <Animated.View
+              key={`period-${opt.key}`}
+              style={{
+                flex: 1,
+                transform: [{ scale: period === opt.key ? periodScale : 1 }],
+              }}
+            >
               <TouchableOpacity
                 style={[styles.periodBtn, period === opt.key && styles.periodActive]}
-                onPress={() => { setPeriod(opt.key); animatePeriodPress(); }}
+                onPress={() => {
+                  setPeriod(opt.key);
+                  animatePeriodPress();
+                }}
               >
                 <Text style={[styles.periodText, period === opt.key && styles.periodTextActive]}>
                   {opt.label}
@@ -174,7 +220,6 @@ export default function AnalyticsScreen() {
         </View>
       </FadeSlideIn>
 
-      {/* Summary Stats */}
       {analytics && (
         <FadeSlideIn delay={100} direction="up">
           <View style={styles.section}>
@@ -182,37 +227,50 @@ export default function AnalyticsScreen() {
               <Text style={styles.sectionDot}>●</Text>
               <Text style={styles.sectionTitle}>OVERVIEW</Text>
             </View>
+
             <View style={styles.statsRow}>
-              <StatCard label="Inspected" value={analytics.total_inspections} icon="◈" color={C.blue} />
-              <StatCard label="Passed" value={analytics.good_count} icon="▲" color={C.good} />
-              <StatCard label="Failed" value={analytics.bad_count} icon="▼" color={C.bad} />
+              <StatCard label="Inspected" value={analytics.total_inspections} icon="◈" color={C.blue} theme={C} />
+              <StatCard label="Passed" value={analytics.good_count} icon="▲" color={C.good} theme={C} />
+              <StatCard label="Failed" value={analytics.bad_count} icon="▼" color={C.bad} theme={C} />
             </View>
+
             <View style={styles.statsRow}>
-              <StatCard label="Pass Rate" value={analytics.pass_rate} unit="%" icon="◆" color={C.good} />
-              <StatCard label="Fail Rate" value={analytics.defect_rate} unit="%" icon="◆" color={C.bad} />
-              <StatCard label="Avg Defects" value={analytics.avg_defects_per_hide} icon="◆" color={C.accent} />
+              <StatCard label="Pass Rate" value={analytics.pass_rate} unit="%" icon="◆" color={C.good} theme={C} />
+              <StatCard label="Fail Rate" value={analytics.defect_rate} unit="%" icon="◆" color={C.bad} theme={C} />
+              <StatCard
+                label="Avg Defects"
+                value={analytics.avg_defects_per_hide}
+                icon="◆"
+                color={C.accent}
+                theme={C}
+              />
             </View>
           </View>
         </FadeSlideIn>
       )}
 
-      {/* Quality Index Gauge with animated bar */}
       {analytics && analytics.total_inspections > 0 && (
         <FadeSlideIn delay={200} direction="up">
           <View style={styles.section}>
             <View style={styles.gaugeCard}>
               <View style={styles.gaugeHeader}>
                 <Text style={styles.gaugeTitle}>QUALITY INDEX</Text>
-                <AnimatedNumber value={analytics.pass_rate} color={analytics.pass_rate >= 70 ? C.good : C.bad} />
+                <AnimatedNumber
+                  value={analytics.pass_rate}
+                  color={analytics.pass_rate >= 70 ? C.good : C.bad}
+                />
               </View>
+
               <View style={styles.gaugeBarBg}>
                 <Animated.View style={[styles.gaugeBarGood, { width: gaugePercent }]} />
               </View>
+
               <View style={styles.gaugeLegend}>
                 <View style={styles.gaugeLegendItem}>
                   <View style={[styles.gaugeLegendDot, { backgroundColor: C.good }]} />
                   <Text style={styles.gaugeLegendText}>Passed ({analytics.good_count})</Text>
                 </View>
+
                 <View style={styles.gaugeLegendItem}>
                   <View style={[styles.gaugeLegendDot, { backgroundColor: C.bad }]} />
                   <Text style={styles.gaugeLegendText}>Failed ({analytics.bad_count})</Text>
@@ -223,7 +281,6 @@ export default function AnalyticsScreen() {
         </FadeSlideIn>
       )}
 
-      {/* Timeline Chart */}
       {timeline.length > 0 && (
         <FadeSlideIn delay={300} direction="up">
           <View style={styles.section}>
@@ -231,6 +288,7 @@ export default function AnalyticsScreen() {
               <Text style={styles.sectionDot}>●</Text>
               <Text style={styles.sectionTitle}>INSPECTION TIMELINE</Text>
             </View>
+
             <View style={styles.chartCard}>
               <BarChart
                 data={barChartData}
@@ -254,13 +312,13 @@ export default function AnalyticsScreen() {
         </FadeSlideIn>
       )}
 
-      {/* Pie Chart */}
       <FadeSlideIn delay={400} direction="up">
         <View style={styles.section}>
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionDot}>●</Text>
             <Text style={styles.sectionTitle}>DEFECT DISTRIBUTION</Text>
           </View>
+
           <View style={styles.chartCard}>
             <PieChart
               data={pieData}
@@ -276,7 +334,6 @@ export default function AnalyticsScreen() {
         </View>
       </FadeSlideIn>
 
-      {/* Defect Table */}
       {defectDist.length > 0 && (
         <FadeSlideIn delay={500} direction="up">
           <View style={styles.section}>
@@ -284,16 +341,19 @@ export default function AnalyticsScreen() {
               <Text style={styles.sectionDot}>●</Text>
               <Text style={styles.sectionTitle}>DEFECT BREAKDOWN</Text>
             </View>
+
             <View style={styles.tableCard}>
               <View style={styles.tableHeader}>
                 <Text style={[styles.thText, { flex: 2 }]}>TYPE</Text>
                 <Text style={[styles.thText, { flex: 1, textAlign: 'center' }]}>COUNT</Text>
                 <Text style={[styles.thText, { flex: 1, textAlign: 'right' }]}>SHARE</Text>
               </View>
+
               {defectDist.map((d, i) => {
                 const total = defectDist.reduce((s, x) => s + x.count, 0);
                 const share = total > 0 ? ((d.count / total) * 100).toFixed(1) : 0;
                 const color = DEFECT_COLORS[i % DEFECT_COLORS.length];
+
                 return (
                   <FadeSlideIn key={`defect-row-${i}-${d.type}`} delay={600 + i * 80} direction="right">
                     <View style={styles.tableRow}>
@@ -301,9 +361,11 @@ export default function AnalyticsScreen() {
                         <View style={[styles.tdDot, { backgroundColor: color }]} />
                         <Text style={styles.tdText}>{(d.type || '?').replace(/_/g, ' ')}</Text>
                       </View>
+
                       <Text style={[styles.tdText, { flex: 1, textAlign: 'center', fontWeight: '800', color }]}>
                         {d.count}
                       </Text>
+
                       <View style={[styles.td, { flex: 1, alignItems: 'flex-end' }]}>
                         <View style={styles.shareBadge}>
                           <Text style={styles.shareText}>{share}%</Text>
@@ -323,63 +385,101 @@ export default function AnalyticsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
-  center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg },
-  loadingText: { marginTop: 16, fontSize: 11, color: C.accent, fontWeight: '800', letterSpacing: 2 },
+const getStyles = (C) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: C.bg },
+    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg },
+    loadingText: { marginTop: 16, fontSize: 11, color: C.accent, fontWeight: '800', letterSpacing: 2 },
 
-  periodBar: {
-    flexDirection: 'row', paddingHorizontal: 16, paddingVertical: 12, gap: 8,
-    backgroundColor: C.card, borderBottomWidth: 1, borderBottomColor: C.border,
-  },
-  periodBtn: {
-    paddingVertical: 8, borderRadius: 6, alignItems: 'center',
-    backgroundColor: C.bg, borderWidth: 1, borderColor: C.border,
-  },
-  periodActive: { backgroundColor: C.accent, borderColor: C.accent },
-  periodText: { fontSize: 11, fontWeight: '800', color: C.muted, letterSpacing: 1 },
-  periodTextActive: { color: '#fff' },
+    periodBar: {
+      flexDirection: 'row',
+      paddingHorizontal: 16,
+      paddingVertical: 12,
+      gap: 8,
+      backgroundColor: C.card,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+    },
+    periodBtn: {
+      paddingVertical: 8,
+      borderRadius: 6,
+      alignItems: 'center',
+      backgroundColor: C.bg,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    periodActive: { backgroundColor: C.accent, borderColor: C.accent },
+    periodText: { fontSize: 11, fontWeight: '800', color: C.muted, letterSpacing: 1 },
+    periodTextActive: { color: C.white },
 
-  section: { paddingHorizontal: 16, marginTop: 20 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
-  sectionTitle: { fontSize: 11, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
-  statsRow: { flexDirection: 'row', marginBottom: 8 },
+    section: { paddingHorizontal: 16, marginTop: 20 },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+    sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
+    sectionTitle: { fontSize: 11, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
+    statsRow: { flexDirection: 'row', marginBottom: 8 },
 
-  gaugeCard: {
-    backgroundColor: C.card, borderRadius: 12, padding: 16,
-    borderWidth: 1, borderColor: C.border,
-  },
-  gaugeHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 },
-  gaugeTitle: { fontSize: 10, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
-  gaugeBarBg: { height: 10, borderRadius: 5, overflow: 'hidden', backgroundColor: C.bad },
-  gaugeBarGood: { height: 10, backgroundColor: C.good, borderRadius: 5 },
-  gaugeLegend: { flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 20 },
-  gaugeLegendItem: { flexDirection: 'row', alignItems: 'center' },
-  gaugeLegendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  gaugeLegendText: { fontSize: 11, color: C.dim },
+    gaugeCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    gaugeHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    gaugeTitle: { fontSize: 10, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
+    gaugeBarBg: { height: 10, borderRadius: 5, overflow: 'hidden', backgroundColor: C.bad },
+    gaugeBarGood: { height: 10, backgroundColor: C.good, borderRadius: 5 },
+    gaugeLegend: { flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 20 },
+    gaugeLegendItem: { flexDirection: 'row', alignItems: 'center' },
+    gaugeLegendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
+    gaugeLegendText: { fontSize: 11, color: C.dim },
 
-  chartCard: {
-    backgroundColor: C.card, borderRadius: 12, padding: 12,
-    borderWidth: 1, borderColor: C.border, alignItems: 'center',
-  },
+    chartCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      padding: 12,
+      borderWidth: 1,
+      borderColor: C.border,
+      alignItems: 'center',
+    },
 
-  tableCard: {
-    backgroundColor: C.card, borderRadius: 12, overflow: 'hidden',
-    borderWidth: 1, borderColor: C.border,
-  },
-  tableHeader: {
-    flexDirection: 'row', paddingVertical: 10, paddingHorizontal: 14,
-    borderBottomWidth: 1, borderBottomColor: C.border, backgroundColor: 'rgba(255,255,255,0.02)',
-  },
-  thText: { fontSize: 9, fontWeight: '800', color: C.muted, letterSpacing: 1.5 },
-  tableRow: {
-    flexDirection: 'row', paddingVertical: 12, paddingHorizontal: 14,
-    borderBottomWidth: 1, borderBottomColor: 'rgba(48,54,61,0.5)', alignItems: 'center',
-  },
-  td: {},
-  tdDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-  tdText: { fontSize: 13, color: C.text },
-  shareBadge: { backgroundColor: 'rgba(255,255,255,0.05)', borderRadius: 4, paddingHorizontal: 8, paddingVertical: 2 },
-  shareText: { fontSize: 11, color: C.dim, fontWeight: '600', fontFamily: 'monospace' },
-});
+    tableCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    tableHeader: {
+      flexDirection: 'row',
+      paddingVertical: 10,
+      paddingHorizontal: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+      backgroundColor: C.subtle2,
+    },
+    thText: { fontSize: 9, fontWeight: '800', color: C.muted, letterSpacing: 1.5 },
+    tableRow: {
+      flexDirection: 'row',
+      paddingVertical: 12,
+      paddingHorizontal: 14,
+      borderBottomWidth: 1,
+      borderBottomColor: C.dividerSoft,
+      alignItems: 'center',
+    },
+    td: {},
+    tdDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
+    tdText: { fontSize: 13, color: C.text },
+    shareBadge: {
+      backgroundColor: C.subtle,
+      borderRadius: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 2,
+    },
+    shareText: { fontSize: 11, color: C.dim, fontWeight: '600', fontFamily: 'monospace' },
+  });

@@ -40,14 +40,17 @@ INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
 # ============================================
 VALID_DEFECT_CLASSES = {"color_defect", "hole", "fold"}
 
+# Lower threshold for deciding whether a hide/event is present
+EVENT_START_CONFIDENCE = 0.20
+
+# Stronger threshold for saving defects into the final record
+MIN_EVENT_CONFIDENCE = 0.35
+
 # How long a hide must be "gone" before we finalize the event
 HIDE_END_TIMEOUT_SECONDS = 3.0
 
 # After saving one hide, block another save briefly
 POST_EVENT_COOLDOWN_SECONDS = 3.0
-
-# Ignore very weak detections when building the saved inspection record
-MIN_EVENT_CONFIDENCE = 0.35
 
 # Save one captured image for the hide/event
 SAVE_CAPTURE_IMAGE = True
@@ -97,13 +100,13 @@ state_lock = threading.Lock()
 
 
 def make_hide_id():
-    return f"HIDE-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+    return f"HIDE-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
 
 
-def filter_valid_detections(detections):
+def filter_target_detections(detections, min_conf=0.0):
     valid = []
     for d in detections:
-        if d["type"] in VALID_DEFECT_CLASSES and d["confidence"] >= MIN_EVENT_CONFIDENCE:
+        if d["type"] in VALID_DEFECT_CLASSES and d["confidence"] >= min_conf:
             valid.append(d)
     return valid
 
@@ -149,7 +152,7 @@ def send_inspection_to_api(hide_id, defects, snapshot_path=None):
         print(f"[INSPECTION] POST error: {e}")
 
 
-def start_inspection_event(frame_rgb, valid_detections, now):
+def start_inspection_event(frame_rgb, initial_detections, now):
     global inspection_active, inspection_start_time, last_defect_seen_time
     global current_hide_id, current_event_detections
     global current_event_best_frame, current_event_best_score
@@ -160,9 +163,10 @@ def start_inspection_event(frame_rgb, valid_detections, now):
     current_hide_id = make_hide_id()
     current_event_detections = {}
     current_event_best_frame = frame_rgb.copy()
-    current_event_best_score = max(d["confidence"] for d in valid_detections)
+    current_event_best_score = max((d["confidence"] for d in initial_detections), default=0.0)
 
-    merge_event_detections(current_event_detections, valid_detections)
+    if initial_detections:
+        merge_event_detections(current_event_detections, initial_detections)
 
     print(f"[INSPECTION] Started {current_hide_id}")
 
@@ -206,33 +210,38 @@ def update_inspection_event(frame_rgb, detections):
     global current_event_best_frame, current_event_best_score
     global last_event_end_time
 
-    valid_detections = filter_valid_detections(detections)
+    target_detections = filter_target_detections(detections, EVENT_START_CONFIDENCE)
+    strong_detections = filter_target_detections(detections, MIN_EVENT_CONFIDENCE)
     now = time.time()
 
-    # If defect appears, either start or update the current hide event
-    if valid_detections:
-        # Do not immediately start a new event right after saving one
-        if not inspection_active:
-            if now - last_event_end_time < POST_EVENT_COOLDOWN_SECONDS:
+    with state_lock:
+        # If we see target defect classes, start or keep the current event alive
+        if target_detections:
+            if not inspection_active:
+                if now - last_event_end_time < POST_EVENT_COOLDOWN_SECONDS:
+                    return
+                start_inspection_event(frame_rgb, strong_detections or target_detections, now)
                 return
-            start_inspection_event(frame_rgb, valid_detections, now)
+
+            last_defect_seen_time = now
+
+            # Only save stronger detections into the final defect record
+            if strong_detections:
+                merge_event_detections(current_event_detections, strong_detections)
+
+            # Best frame can come from any target detection above event threshold
+            best_conf = max(d["confidence"] for d in target_detections)
+            if best_conf > current_event_best_score:
+                current_event_best_score = best_conf
+                current_event_best_frame = frame_rgb.copy()
+
             return
 
-        last_defect_seen_time = now
-        merge_event_detections(current_event_detections, valid_detections)
-
-        best_conf = max(d["confidence"] for d in valid_detections)
-        if best_conf > current_event_best_score:
-            current_event_best_score = best_conf
-            current_event_best_frame = frame_rgb.copy()
-
-        return
-
-    # No valid defect in this frame:
-    # if an event is active and enough time passes, finalize once
-    if inspection_active and last_defect_seen_time is not None:
-        if now - last_defect_seen_time >= HIDE_END_TIMEOUT_SECONDS:
-            finalize_inspection_event()
+        # No target detections in this frame:
+        # if an event is active and enough time passes, finalize once
+        if inspection_active and last_defect_seen_time is not None:
+            if now - last_defect_seen_time >= HIDE_END_TIMEOUT_SECONDS:
+                finalize_inspection_event()
 
 
 def run_detection(frame):
@@ -335,15 +344,19 @@ def video_feed():
 
 @app.route("/api/stream/status")
 def stream_status():
-    return jsonify({
-        "status": "running",
-        "resolution": f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
-        "detections": last_detections,
-        "inspection_event": {
+    with state_lock:
+        event_snapshot = {
             "active": inspection_active,
             "current_hide_id": current_hide_id,
             "collected_defects": list(current_event_detections.values()),
-        },
+        }
+        detections_snapshot = list(last_detections)
+
+    return jsonify({
+        "status": "running",
+        "resolution": f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
+        "detections": detections_snapshot,
+        "inspection_event": event_snapshot,
         "performance": {
             "detect_every_n_frames": DETECT_EVERY_N_FRAMES,
             "imgsz": YOLO_IMGSZ,
@@ -395,6 +408,10 @@ def home():
           JPEG quality: {JPEG_QUALITY}
         </p>
         <p>
+          Event start confidence: {EVENT_START_CONFIDENCE} |
+          Save confidence: {MIN_EVENT_CONFIDENCE}
+        </p>
+        <p>
           Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s |
           Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s
         </p>
@@ -415,6 +432,8 @@ if __name__ == "__main__":
     print(f"- JPEG quality: {JPEG_QUALITY}")
     print(f"- Target FPS: {TARGET_FPS}")
     print(f"- Valid defect classes: {VALID_DEFECT_CLASSES}")
+    print(f"- Event start confidence: {EVENT_START_CONFIDENCE}")
+    print(f"- Save confidence: {MIN_EVENT_CONFIDENCE}")
     print(f"- Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s")
     print(f"- Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s")
     print(f"- API: {INSPECTIONS_API_URL}\n")

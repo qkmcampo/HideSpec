@@ -22,7 +22,7 @@ import {
   getSystemStatus,
 } from '../services/inspectionService';
 
-const C = {
+const darkTheme = {
   bg: '#0d1117',
   card: '#161b22',
   border: '#30363d',
@@ -33,6 +33,39 @@ const C = {
   good: '#3fb950',
   bad: '#f85149',
   blue: '#58a6ff',
+  liveOverlay: 'rgba(0,0,0,0.7)',
+  feedBg: '#000',
+  goodSoft: 'rgba(63,185,80,0.06)',
+  goodSoftBorder: 'rgba(63,185,80,0.15)',
+  badSoft: 'rgba(248,81,73,0.08)',
+  accentSoft: 'rgba(240,136,62,0.1)',
+  accentSoftStrong: 'rgba(240,136,62,0.15)',
+  accentSoftBorder: 'rgba(240,136,62,0.3)',
+  whiteSoftBorder: 'rgba(255,255,255,0.04)',
+  dividerSoft: 'rgba(48,54,61,0.5)',
+};
+
+const lightTheme = {
+  bg: '#f6f8fa',
+  card: '#ffffff',
+  border: '#d0d7de',
+  text: '#24292f',
+  dim: '#57606a',
+  muted: '#6e7781',
+  accent: '#f0883e',
+  good: '#1a7f37',
+  bad: '#cf222e',
+  blue: '#0969da',
+  liveOverlay: 'rgba(255,255,255,0.88)',
+  feedBg: '#000',
+  goodSoft: 'rgba(26,127,55,0.08)',
+  goodSoftBorder: 'rgba(26,127,55,0.18)',
+  badSoft: 'rgba(207,34,46,0.08)',
+  accentSoft: 'rgba(240,136,62,0.12)',
+  accentSoftStrong: 'rgba(240,136,62,0.16)',
+  accentSoftBorder: 'rgba(240,136,62,0.35)',
+  whiteSoftBorder: 'rgba(0,0,0,0.06)',
+  dividerSoft: 'rgba(208,215,222,0.8)',
 };
 
 function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
@@ -80,7 +113,7 @@ function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
   );
 }
 
-function PulseDot({ connected }) {
+function PulseDot({ connected, C, styles }) {
   const pulse = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -123,7 +156,7 @@ function PulseDot({ connected }) {
   );
 }
 
-function LiveIndicator() {
+function LiveIndicator({ styles, C }) {
   const blink = useRef(new Animated.Value(1)).current;
 
   useEffect(() => {
@@ -145,13 +178,13 @@ function LiveIndicator() {
 
   return (
     <View style={styles.liveIndicator}>
-      <Animated.View style={[styles.liveDot, { opacity: blink }]} />
-      <Text style={styles.liveText}>LIVE</Text>
+      <Animated.View style={[styles.liveDot, { opacity: blink, backgroundColor: C.bad }]} />
+      <Text style={[styles.liveText, { color: C.bad }]}>LIVE</Text>
     </View>
   );
 }
 
-function WebStream({ width }) {
+function WebStream({ width, styles }) {
   return (
     <View style={[styles.webFeedWrap, { maxWidth: width }]}>
       <img
@@ -163,7 +196,7 @@ function WebStream({ width }) {
   );
 }
 
-function NativeSnapshot({ height }) {
+function NativeSnapshot({ height, styles }) {
   return (
     <Image
       source={{ uri: SNAPSHOT_URL }}
@@ -174,6 +207,10 @@ function NativeSnapshot({ height }) {
 }
 
 export default function LiveMonitorScreen() {
+  const [themeMode, setThemeMode] = useState('dark');
+  const C = themeMode === 'dark' ? darkTheme : lightTheme;
+  const styles = getStyles(C);
+
   const [connected, setConnected] = useState(false);
   const [latestResult, setLatestResult] = useState(null);
   const [recentHistory, setRecentHistory] = useState([]);
@@ -302,7 +339,7 @@ export default function LiveMonitorScreen() {
       <FadeSlideIn delay={0} direction="down">
         <View style={styles.statusBar}>
           <View style={styles.statusLeft}>
-            <PulseDot connected={connected} />
+            <PulseDot connected={connected} C={C} styles={styles} />
             <View style={{ marginLeft: 16 }}>
               <Text
                 style={[
@@ -319,14 +356,25 @@ export default function LiveMonitorScreen() {
             </View>
           </View>
 
-          {systemStatus?.session && (
-            <View style={styles.statusRight}>
-              <Text style={styles.statusCount}>
-                {systemStatus.session.total_inspected || 0}
+          <View style={styles.headerActions}>
+            <TouchableOpacity
+              style={styles.themeBtn}
+              onPress={() => setThemeMode((prev) => (prev === 'dark' ? 'light' : 'dark'))}
+            >
+              <Text style={styles.themeBtnText}>
+                {themeMode === 'dark' ? 'LIGHT' : 'DARK'}
               </Text>
-              <Text style={styles.statusCountLabel}>TOTAL</Text>
-            </View>
-          )}
+            </TouchableOpacity>
+
+            {systemStatus?.session && (
+              <View style={styles.statusRight}>
+                <Text style={styles.statusCount}>
+                  {systemStatus.session.total_inspected || 0}
+                </Text>
+                <Text style={styles.statusCountLabel}>TOTAL</Text>
+              </View>
+            )}
+          </View>
         </View>
       </FadeSlideIn>
 
@@ -390,7 +438,7 @@ export default function LiveMonitorScreen() {
 
           {showLiveFeed && (
             <View style={styles.feedCard}>
-              <LiveIndicator />
+              <LiveIndicator styles={styles} C={C} />
 
               <View style={styles.sizeControls}>
                 {['small', 'medium', 'large', 'full'].map((size) => (
@@ -421,9 +469,9 @@ export default function LiveMonitorScreen() {
               </View>
 
               {Platform.OS === 'web' ? (
-                <WebStream width={FEED_WIDTHS[feedSize]} />
+                <WebStream width={FEED_WIDTHS[feedSize]} styles={styles} />
               ) : (
-                <NativeSnapshot height={FEED_HEIGHTS[feedSize]} />
+                <NativeSnapshot height={FEED_HEIGHTS[feedSize]} styles={styles} />
               )}
 
               <View style={styles.feedInfoBar}>
@@ -508,8 +556,8 @@ export default function LiveMonitorScreen() {
                   {
                     backgroundColor:
                       latestResult.classification === 'Good'
-                        ? 'rgba(63,185,80,0.08)'
-                        : 'rgba(248,81,73,0.08)',
+                        ? C.goodSoft
+                        : C.badSoft,
                   },
                 ]}
               >
@@ -636,350 +684,369 @@ export default function LiveMonitorScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: C.bg },
-  center: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: C.bg,
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 12,
-    color: C.accent,
-    fontWeight: '800',
-    letterSpacing: 2,
-  },
-  loadingSub: { marginTop: 4, fontSize: 12, color: C.muted },
+const getStyles = (C) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: C.bg },
+    center: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: C.bg,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 12,
+      color: C.accent,
+      fontWeight: '800',
+      letterSpacing: 2,
+    },
+    loadingSub: { marginTop: 4, fontSize: 12, color: C.muted },
 
-  pulseContainer: {
-    width: 24,
-    height: 24,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  pulseRing: {
-    position: 'absolute',
-    width: 24,
-    height: 24,
-    borderRadius: 12,
-  },
-  pulseDot: { width: 10, height: 10, borderRadius: 5 },
+    pulseContainer: {
+      width: 24,
+      height: 24,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    pulseRing: {
+      position: 'absolute',
+      width: 24,
+      height: 24,
+      borderRadius: 12,
+    },
+    pulseDot: { width: 10, height: 10, borderRadius: 5 },
 
-  statusBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 14,
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  statusLeft: { flexDirection: 'row', alignItems: 'center' },
-  statusLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
-  statusSub: { fontSize: 10, color: C.muted, marginTop: 2, letterSpacing: 0.3 },
-  statusRight: { alignItems: 'center' },
-  statusCount: { fontSize: 22, fontWeight: '900', color: C.text },
-  statusCountLabel: {
-    fontSize: 8,
-    color: C.muted,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-  },
+    statusBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 16,
+      paddingVertical: 14,
+      backgroundColor: C.card,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+    },
+    statusLeft: { flexDirection: 'row', alignItems: 'center', flex: 1 },
+    headerActions: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 10,
+    },
+    statusLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1.5 },
+    statusSub: { fontSize: 10, color: C.muted, marginTop: 2, letterSpacing: 0.3 },
+    statusRight: { alignItems: 'center', minWidth: 56 },
+    statusCount: { fontSize: 22, fontWeight: '900', color: C.text },
+    statusCountLabel: {
+      fontSize: 8,
+      color: C.muted,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+    },
 
-  quickStats: {
-    flexDirection: 'row',
-    backgroundColor: C.card,
-    borderBottomWidth: 1,
-    borderBottomColor: C.border,
-  },
-  quickStatItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
-  quickStatValue: { fontSize: 20, fontWeight: '900' },
-  quickStatLabel: {
-    fontSize: 8,
-    color: C.muted,
-    fontWeight: '700',
-    letterSpacing: 1.5,
-    marginTop: 2,
-  },
+    themeBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 6,
+      borderRadius: 6,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+    },
+    themeBtnText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: C.text,
+      letterSpacing: 1,
+    },
 
-  section: { paddingHorizontal: 16, marginTop: 20 },
-  sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-  sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
-  sectionTitle: {
-    fontSize: 11,
-    fontWeight: '800',
-    color: C.dim,
-    letterSpacing: 1.5,
-    flex: 1,
-  },
-  sectionCount: { fontSize: 10, color: C.muted },
+    quickStats: {
+      flexDirection: 'row',
+      backgroundColor: C.card,
+      borderBottomWidth: 1,
+      borderBottomColor: C.border,
+    },
+    quickStatItem: { flex: 1, alignItems: 'center', paddingVertical: 12 },
+    quickStatValue: { fontSize: 20, fontWeight: '900' },
+    quickStatLabel: {
+      fontSize: 8,
+      color: C.muted,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+      marginTop: 2,
+    },
 
-  toggleBtn: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: C.border,
-    backgroundColor: C.bg,
-  },
-  toggleBtnActive: {
-    borderColor: C.accent,
-    backgroundColor: 'rgba(240,136,62,0.1)',
-  },
-  toggleText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: C.muted,
-    letterSpacing: 1,
-  },
-  toggleTextActive: { color: C.accent },
+    section: { paddingHorizontal: 16, marginTop: 20 },
+    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+    sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
+    sectionTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: C.dim,
+      letterSpacing: 1.5,
+      flex: 1,
+    },
+    sectionCount: { fontSize: 10, color: C.muted },
 
-  feedCard: {
-    backgroundColor: C.card,
-    borderRadius: 12,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: C.border,
-    position: 'relative',
-  },
+    toggleBtn: {
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 4,
+      borderWidth: 1,
+      borderColor: C.border,
+      backgroundColor: C.bg,
+    },
+    toggleBtnActive: {
+      borderColor: C.accent,
+      backgroundColor: C.accentSoft,
+    },
+    toggleText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: C.muted,
+      letterSpacing: 1,
+    },
+    toggleTextActive: { color: C.accent },
 
-  feedImage: {
-    width: '100%',
-    backgroundColor: '#000',
-  },
+    feedCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      overflow: 'hidden',
+      borderWidth: 1,
+      borderColor: C.border,
+      position: 'relative',
+    },
 
-  webFeedWrap: {
-    width: '100%',
-    aspectRatio: 4 / 3,
-    alignSelf: 'center',
-    backgroundColor: '#000',
-  },
+    feedImage: {
+      width: '100%',
+      backgroundColor: C.feedBg,
+    },
 
-  webFeedImage: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'contain',
-    display: 'block',
-    backgroundColor: '#000',
-  },
+    webFeedWrap: {
+      width: '100%',
+      aspectRatio: 4 / 3,
+      alignSelf: 'center',
+      backgroundColor: C.feedBg,
+    },
 
-  sizeControls: {
-    position: 'absolute',
-    top: 10,
-    right: 10,
-    zIndex: 10,
-    flexDirection: 'row',
-    gap: 4,
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 6,
-    padding: 3,
-  },
-  sizeBtn: {
-    width: 28,
-    height: 24,
-    borderRadius: 4,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  sizeBtnActive: { backgroundColor: C.accent },
-  sizeBtnText: {
-    fontSize: 9,
-    fontWeight: '800',
-    color: C.muted,
-    letterSpacing: 0.5,
-  },
-  sizeBtnTextActive: { color: '#fff' },
+    webFeedImage: {
+      width: '100%',
+      height: '100%',
+      objectFit: 'contain',
+      display: 'block',
+      backgroundColor: C.feedBg,
+    },
 
-  liveIndicator: {
-    position: 'absolute',
-    top: 10,
-    left: 10,
-    zIndex: 10,
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0,0,0,0.7)',
-    borderRadius: 4,
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-  },
-  liveDot: {
-    width: 8,
-    height: 8,
-    borderRadius: 4,
-    backgroundColor: '#f85149',
-    marginRight: 6,
-  },
-  liveText: {
-    fontSize: 10,
-    fontWeight: '900',
-    color: '#f85149',
-    letterSpacing: 1.5,
-  },
+    sizeControls: {
+      position: 'absolute',
+      top: 10,
+      right: 10,
+      zIndex: 10,
+      flexDirection: 'row',
+      gap: 4,
+      backgroundColor: C.liveOverlay,
+      borderRadius: 6,
+      padding: 3,
+    },
+    sizeBtn: {
+      width: 28,
+      height: 24,
+      borderRadius: 4,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    sizeBtnActive: { backgroundColor: C.accent },
+    sizeBtnText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: C.muted,
+      letterSpacing: 0.5,
+    },
+    sizeBtnTextActive: { color: '#fff' },
 
-  feedInfoBar: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderTopWidth: 1,
-    borderTopColor: C.border,
-  },
-  feedInfoText: { fontSize: 9, color: C.muted, letterSpacing: 0.3 },
-  feedDetectionBadge: {
-    backgroundColor: 'rgba(240,136,62,0.15)',
-    borderRadius: 8,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(240,136,62,0.3)',
-  },
-  feedDetectionText: { fontSize: 9, fontWeight: '800', color: C.accent },
-  feedDetections: {
-    paddingHorizontal: 12,
-    paddingBottom: 10,
-    borderTopWidth: 1,
-    borderTopColor: 'rgba(48,54,61,0.5)',
-  },
-  feedDefectItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 4,
-  },
-  feedDefectDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
-  feedDefectType: { fontSize: 11, color: C.dim, flex: 1 },
-  feedDefectConf: { fontSize: 11, color: C.muted, fontFamily: 'monospace' },
+    liveIndicator: {
+      position: 'absolute',
+      top: 10,
+      left: 10,
+      zIndex: 10,
+      flexDirection: 'row',
+      alignItems: 'center',
+      backgroundColor: C.liveOverlay,
+      borderRadius: 4,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+    },
+    liveDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: 6,
+    },
+    liveText: {
+      fontSize: 10,
+      fontWeight: '900',
+      letterSpacing: 1.5,
+    },
 
-  latestCard: {
-    backgroundColor: C.card,
-    borderRadius: 12,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: C.border,
-    overflow: 'hidden',
-  },
-  latestHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    marginBottom: 14,
-  },
-  hideId: { fontSize: 22, fontWeight: '900', color: C.text, letterSpacing: -0.3 },
-  timestamp: { fontSize: 12, color: C.muted, marginTop: 3, fontFamily: 'monospace' },
-  resultBar: {
-    borderRadius: 8,
-    padding: 10,
-    marginBottom: 14,
-    borderWidth: 1,
-    borderColor: 'rgba(255,255,255,0.04)',
-  },
-  resultBarText: {
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    textAlign: 'center',
-  },
+    feedInfoBar: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      borderTopWidth: 1,
+      borderTopColor: C.border,
+    },
+    feedInfoText: { fontSize: 9, color: C.muted, letterSpacing: 0.3 },
+    feedDetectionBadge: {
+      backgroundColor: C.accentSoftStrong,
+      borderRadius: 8,
+      paddingHorizontal: 8,
+      paddingVertical: 3,
+      borderWidth: 1,
+      borderColor: C.accentSoftBorder,
+    },
+    feedDetectionText: { fontSize: 9, fontWeight: '800', color: C.accent },
+    feedDetections: {
+      paddingHorizontal: 12,
+      paddingBottom: 10,
+      borderTopWidth: 1,
+      borderTopColor: C.dividerSoft,
+    },
+    feedDefectItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      paddingVertical: 4,
+    },
+    feedDefectDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
+    feedDefectType: { fontSize: 11, color: C.dim, flex: 1 },
+    feedDefectConf: { fontSize: 11, color: C.muted, fontFamily: 'monospace' },
 
-  defectsHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 10,
-    marginTop: 4,
-  },
-  defectsTitle: {
-    fontSize: 10,
-    fontWeight: '800',
-    color: C.dim,
-    letterSpacing: 1.5,
-    flex: 1,
-  },
-  defectCountBadge: {
-    backgroundColor: 'rgba(240,136,62,0.15)',
-    borderRadius: 10,
-    paddingHorizontal: 10,
-    paddingVertical: 3,
-    borderWidth: 1,
-    borderColor: 'rgba(240,136,62,0.3)',
-  },
-  defectCountText: { fontSize: 11, fontWeight: '800', color: C.accent },
+    latestCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      padding: 16,
+      borderWidth: 1,
+      borderColor: C.border,
+      overflow: 'hidden',
+    },
+    latestHeader: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      marginBottom: 14,
+    },
+    hideId: { fontSize: 22, fontWeight: '900', color: C.text, letterSpacing: -0.3 },
+    timestamp: { fontSize: 12, color: C.muted, marginTop: 3, fontFamily: 'monospace' },
+    resultBar: {
+      borderRadius: 8,
+      padding: 10,
+      marginBottom: 14,
+      borderWidth: 1,
+      borderColor: C.whiteSoftBorder,
+    },
+    resultBarText: {
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1,
+      textAlign: 'center',
+    },
 
-  noDefectsBox: {
-    backgroundColor: 'rgba(63,185,80,0.06)',
-    borderRadius: 10,
-    padding: 20,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: 'rgba(63,185,80,0.15)',
-  },
-  noDefectsIcon: { fontSize: 28, color: C.good, marginBottom: 6 },
-  noDefectsText: { fontSize: 13, color: C.good, fontWeight: '700' },
-  noDefectsSub: { fontSize: 11, color: C.muted, marginTop: 2 },
+    defectsHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 10,
+      marginTop: 4,
+    },
+    defectsTitle: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: C.dim,
+      letterSpacing: 1.5,
+      flex: 1,
+    },
+    defectCountBadge: {
+      backgroundColor: C.accentSoftStrong,
+      borderRadius: 10,
+      paddingHorizontal: 10,
+      paddingVertical: 3,
+      borderWidth: 1,
+      borderColor: C.accentSoftBorder,
+    },
+    defectCountText: { fontSize: 11, fontWeight: '800', color: C.accent },
 
-  emptyCard: {
-    backgroundColor: C.card,
-    borderRadius: 12,
-    padding: 50,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: C.border,
-  },
-  emptyPulse: {
-    width: 60,
-    height: 60,
-    borderRadius: 30,
-    backgroundColor: 'rgba(240,136,62,0.08)',
-    justifyContent: 'center',
-    alignItems: 'center',
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: 'rgba(240,136,62,0.2)',
-  },
-  emptyIcon: { fontSize: 28, color: C.accent },
-  emptyTitle: {
-    fontSize: 12,
-    fontWeight: '800',
-    color: C.dim,
-    letterSpacing: 2,
-  },
-  emptySub: {
-    fontSize: 12,
-    color: C.muted,
-    textAlign: 'center',
-    marginTop: 8,
-    lineHeight: 18,
-  },
+    noDefectsBox: {
+      backgroundColor: C.goodSoft,
+      borderRadius: 10,
+      padding: 20,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: C.goodSoftBorder,
+    },
+    noDefectsIcon: { fontSize: 28, color: C.good, marginBottom: 6 },
+    noDefectsText: { fontSize: 13, color: C.good, fontWeight: '700' },
+    noDefectsSub: { fontSize: 11, color: C.muted, marginTop: 2 },
 
-  historyItem: {
-    backgroundColor: C.card,
-    borderRadius: 10,
-    marginBottom: 6,
-    borderWidth: 1,
-    borderColor: C.border,
-    flexDirection: 'row',
-    overflow: 'hidden',
-  },
-  historyIndicator: { width: 3 },
-  historyContent: { flex: 1, padding: 12 },
-  historyTop: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  historyHideId: { fontSize: 14, fontWeight: '700', color: C.text },
-  historyBottom: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 6,
-  },
-  historyTime: { fontSize: 11, color: C.muted, fontFamily: 'monospace' },
-  historyDefects: { fontSize: 11, color: C.dim },
-  noHistory: {
-    fontSize: 12,
-    color: C.muted,
-    textAlign: 'center',
-    paddingVertical: 30,
-  },
-});
+    emptyCard: {
+      backgroundColor: C.card,
+      borderRadius: 12,
+      padding: 50,
+      alignItems: 'center',
+      borderWidth: 1,
+      borderColor: C.border,
+    },
+    emptyPulse: {
+      width: 60,
+      height: 60,
+      borderRadius: 30,
+      backgroundColor: C.accentSoft,
+      justifyContent: 'center',
+      alignItems: 'center',
+      marginBottom: 16,
+      borderWidth: 1,
+      borderColor: C.accentSoftBorder,
+    },
+    emptyIcon: { fontSize: 28, color: C.accent },
+    emptyTitle: {
+      fontSize: 12,
+      fontWeight: '800',
+      color: C.dim,
+      letterSpacing: 2,
+    },
+    emptySub: {
+      fontSize: 12,
+      color: C.muted,
+      textAlign: 'center',
+      marginTop: 8,
+      lineHeight: 18,
+    },
+
+    historyItem: {
+      backgroundColor: C.card,
+      borderRadius: 10,
+      marginBottom: 6,
+      borderWidth: 1,
+      borderColor: C.border,
+      flexDirection: 'row',
+      overflow: 'hidden',
+    },
+    historyIndicator: { width: 3 },
+    historyContent: { flex: 1, padding: 12 },
+    historyTop: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+    historyHideId: { fontSize: 14, fontWeight: '700', color: C.text },
+    historyBottom: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      marginTop: 6,
+    },
+    historyTime: { fontSize: 11, color: C.muted, fontFamily: 'monospace' },
+    historyDefects: { fontSize: 11, color: C.dim },
+    noHistory: {
+      fontSize: 12,
+      color: C.muted,
+      textAlign: 'center',
+      paddingVertical: 30,
+    },
+  });

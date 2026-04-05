@@ -1,110 +1,170 @@
-import { API_BASE_URL, WS_URL } from '../config/api';
 import { io } from 'socket.io-client';
+import { API_BASE_URL, WS_URL } from '../config/api';
 
-export async function getSystemStatus() {
+let socket = null;
+
+async function safeJson(response) {
+  const text = await response.text();
   try {
-    const response = await fetch(`${API_BASE_URL}/api/status`);
-    if (!response.ok) throw new Error('Failed to fetch status');
-    return await response.json();
+    return text ? JSON.parse(text) : null;
   } catch (error) {
-    console.error('getSystemStatus error:', error);
-    return null;
+    throw new Error(`Invalid JSON response: ${text}`);
   }
 }
 
-export async function getInspections(limit = 50, offset = 0, classification = null) {
+async function apiGet(path) {
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  const data = await safeJson(response);
+
+  if (!response.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      `Request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+export async function getSystemStatus() {
   try {
-    let url = `${API_BASE_URL}/api/inspections?limit=${limit}&offset=${offset}`;
-    if (classification) url += `&classification=${classification}`;
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Failed to fetch inspections');
-    return await response.json();
+    return await apiGet('/api/status');
   } catch (error) {
-    console.error('getInspections error:', error);
-    return { count: 0, inspections: [] };
+    console.error('getSystemStatus error:', error.message);
+    return {
+      status: 'offline',
+      message: error.message,
+      system: {
+        model: 'YOLOv8n',
+        platform: 'Raspberry Pi 5',
+        camera: 'Pi Camera Module 3',
+      },
+      session: {
+        total_inspected: 0,
+        good_count: 0,
+        bad_count: 0,
+        defect_rate: 0,
+      },
+      analytics: {
+        defects_by_type: {},
+      },
+    };
   }
 }
 
 export async function getLatestInspection() {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/inspections/latest`);
-    if (!response.ok) throw new Error('No inspections available');
-    return await response.json();
+    return await apiGet('/api/inspections/latest');
   } catch (error) {
-    console.error('getLatestInspection error:', error);
+    // 404 means no inspection yet; return null instead of crashing UI
+    if (
+      error.message?.toLowerCase().includes('no inspection has been recorded yet')
+    ) {
+      return null;
+    }
+
+    console.error('getLatestInspection error:', error.message);
     return null;
   }
 }
 
-export async function getAnalytics(period = 'today') {
+export async function getInspections(limit = 20) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/analytics?period=${period}`);
-    if (!response.ok) throw new Error('Failed to fetch analytics');
-    return await response.json();
+    return await apiGet(`/api/inspections?limit=${limit}`);
   } catch (error) {
-    console.error('getAnalytics error:', error);
-    return null;
+    console.error('getInspections error:', error.message);
+    return {
+      count: 0,
+      inspections: [],
+    };
   }
 }
 
-export async function getDefectDistribution() {
+export async function resetHistory(deleteCaptures = false) {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/analytics/defect-distribution`);
-    if (!response.ok) throw new Error('Failed to fetch defect distribution');
-    return await response.json();
+    const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        delete_captures: deleteCaptures,
+      }),
+    });
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+      const message =
+        data?.error ||
+        data?.message ||
+        `Request failed with status ${response.status}`;
+      throw new Error(message);
+    }
+
+    return data;
   } catch (error) {
-    console.error('getDefectDistribution error:', error);
-    return { defects: [] };
+    console.error('resetHistory error:', error.message);
+    throw error;
   }
 }
-
-export async function getTimeline(period = 'today') {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/analytics/timeline?period=${period}`);
-    if (!response.ok) throw new Error('Failed to fetch timeline');
-    return await response.json();
-  } catch (error) {
-    console.error('getTimeline error:', error);
-    return { timeline: [] };
-  }
-}
-
-export function getInspectionImageUrl(inspectionId) {
-  return `${API_BASE_URL}/api/inspections/${inspectionId}/image`;
-}
-
-let socket = null;
 
 export function connectWebSocket(handlers = {}) {
-  if (socket && socket.connected) return socket;
+  const {
+    onConnect,
+    onDisconnect,
+    onNewInspection,
+    onStatusUpdate,
+    onConnectedMessage,
+  } = handlers;
+
+  if (socket) {
+    return socket;
+  }
 
   socket = io(WS_URL, {
-    transports: ['websocket'],
+    transports: ['websocket', 'polling'],
     reconnection: true,
-    reconnectionAttempts: 10,
-    reconnectionDelay: 2000,
+    reconnectionAttempts: Infinity,
+    reconnectionDelay: 1000,
+    timeout: 5000,
   });
 
   socket.on('connect', () => {
     console.log('WebSocket connected');
-    handlers.onConnect?.();
+    if (onConnect) onConnect();
   });
 
   socket.on('disconnect', () => {
     console.log('WebSocket disconnected');
-    handlers.onDisconnect?.();
+    if (onDisconnect) onDisconnect();
+  });
+
+  socket.on('connected', (data) => {
+    console.log('WebSocket connected message:', data);
+    if (onConnectedMessage) onConnectedMessage(data);
   });
 
   socket.on('new_inspection', (data) => {
-    handlers.onNewInspection?.(data);
+    console.log('New inspection:', data);
+    if (onNewInspection) onNewInspection(data);
   });
 
   socket.on('status_update', (data) => {
-    handlers.onStatusUpdate?.(data);
+    console.log('Status update:', data);
+    if (onStatusUpdate) onStatusUpdate(data);
   });
 
   socket.on('connect_error', (error) => {
-    console.error('WebSocket error:', error.message);
+    console.error('WebSocket connect_error:', error.message);
   });
 
   return socket;
@@ -117,6 +177,16 @@ export function disconnectWebSocket() {
   }
 }
 
-export function isWebSocketConnected() {
-  return !!(socket && socket.connected);
+export function getSocket() {
+  return socket;
 }
+
+export default {
+  getSystemStatus,
+  getLatestInspection,
+  getInspections,
+  resetHistory,
+  connectWebSocket,
+  disconnectWebSocket,
+  getSocket,
+};

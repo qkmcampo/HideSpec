@@ -8,31 +8,51 @@ const DEFECT_CONFIG = {
   default: { color: '#8b949e', icon: '◈', label: 'Unknown' },
 };
 
-export default function DefectCard({ defect }) {
+const defaultTheme = {
+  card: '#161b22',
+  border: '#30363d',
+  text: '#e6edf3',
+  muted: '#484f58',
+  barBg: '#21262d',
+};
+
+export default function DefectCard({ defect, theme }) {
+  const C = theme || defaultTheme;
   const config = DEFECT_CONFIG[defect.type] || DEFECT_CONFIG.default;
   const confidence = Math.round((defect.confidence || 0) * 100);
 
   return (
-    <View style={[styles.card, { borderLeftColor: config.color }]}>
+    <View style={[styles.card, { backgroundColor: C.card, borderColor: C.border, borderLeftColor: config.color }]}>
       <View style={styles.row}>
         <View style={styles.left}>
           <View style={styles.typeRow}>
             <Text style={[styles.icon, { color: config.color }]}>{config.icon}</Text>
-            <Text style={styles.type}>{config.label}</Text>
+            <Text style={[styles.type, { color: C.text }]}>{config.label}</Text>
           </View>
-          {(defect.x !== undefined && defect.y !== undefined) && (
-            <Text style={styles.location}>
+
+          {defect.x !== undefined && defect.y !== undefined && (
+            <Text style={[styles.location, { color: C.muted }]}>
               ({defect.x}, {defect.y}) · {defect.w}×{defect.h}
             </Text>
           )}
         </View>
+
         <View style={styles.right}>
           <Text style={[styles.confidence, { color: config.color }]}>{confidence}</Text>
-          <Text style={styles.percent}>%</Text>
+          <Text style={[styles.percent, { color: C.muted }]}>%</Text>
         </View>
       </View>
-      <View style={styles.barBg}>
-        <View style={[styles.barFill, { width: `${confidence}%`, backgroundColor: config.color }]} />
+
+      <View style={[styles.barBg, { backgroundColor: C.barBg }]}>
+        <View
+          style={[
+            styles.barFill,
+            {
+              width: `${confidence}%`,
+              backgroundColor: config.color,
+            },
+          ]}
+        />
       </View>
     </View>
   );
@@ -40,12 +60,10 @@ export default function DefectCard({ defect }) {
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#161b22',
     borderLeftWidth: 3,
     borderRadius: 8,
     padding: 14,
     marginBottom: 8,
-    borderColor: '#30363d',
     borderWidth: 1,
   },
   row: {
@@ -65,12 +83,10 @@ const styles = StyleSheet.create({
   type: {
     fontSize: 14,
     fontWeight: '700',
-    color: '#e6edf3',
     letterSpacing: 0.3,
   },
   location: {
     fontSize: 11,
-    color: '#484f58',
     marginTop: 4,
     fontFamily: 'monospace',
     letterSpacing: 0.5,
@@ -85,13 +101,11 @@ const styles = StyleSheet.create({
   },
   percent: {
     fontSize: 12,
-    color: '#484f58',
     fontWeight: '600',
     marginLeft: 1,
   },
   barBg: {
     height: 3,
-    backgroundColor: '#21262d',
     borderRadius: 2,
     marginTop: 10,
     overflow: 'hidden',

@@ -1,17 +1,34 @@
 import React from 'react';
 import { View, Text, StyleSheet } from 'react-native';
 
-export default function StatCard({ label, value, unit = '', color = '#58a6ff', icon = '' }) {
+const defaultTheme = {
+  card: '#161b22',
+  border: '#30363d',
+  muted: '#484f58',
+};
+
+export default function StatCard({
+  label,
+  value,
+  unit = '',
+  color = '#58a6ff',
+  icon = '',
+  theme,
+}) {
+  const C = theme || defaultTheme;
+
   return (
-    <View style={styles.card}>
+    <View style={[styles.card, { backgroundColor: C.card, borderColor: C.border }]}>
       <View style={[styles.accent, { backgroundColor: color }]} />
       <View style={styles.content}>
         {icon ? <Text style={styles.icon}>{icon}</Text> : null}
+
         <Text style={[styles.value, { color }]}>
           {value}
-          {unit ? <Text style={styles.unit}>{unit}</Text> : null}
+          {unit ? <Text style={[styles.unit, { color }]}>{unit}</Text> : null}
         </Text>
-        <Text style={styles.label}>{label}</Text>
+
+        <Text style={[styles.label, { color: C.muted }]}>{label}</Text>
       </View>
     </View>
   );
@@ -19,10 +36,8 @@ export default function StatCard({ label, value, unit = '', color = '#58a6ff', i
 
 const styles = StyleSheet.create({
   card: {
-    backgroundColor: '#161b22',
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: '#30363d',
     flex: 1,
     margin: 4,
     overflow: 'hidden',
@@ -49,9 +64,8 @@ const styles = StyleSheet.create({
     fontWeight: '500',
   },
   label: {
-    fontSize: 9,
-    color: '#484f58',
     marginTop: 6,
+    fontSize: 9,
     textTransform: 'uppercase',
     letterSpacing: 1.5,
     fontWeight: '700',
