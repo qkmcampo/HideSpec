@@ -10,10 +10,10 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-print("=" * 55)
-print("HIDESPEC - EVENT CAPTURE CAMERA STREAM SERVER")
+print("=" * 60)
+print("HIDESPEC - SINGLE CAPTURE PER HIDE STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
-print("=" * 55)
+print("=" * 60)
 
 # ============================================
 # LOW-LAG STREAM SETTINGS
@@ -40,10 +40,16 @@ INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
 # ============================================
 VALID_DEFECT_CLASSES = {"color_defect", "hole", "fold"}
 
-# End the inspection event after this many seconds without seeing a valid defect
-HIDE_END_TIMEOUT_SECONDS = 1.5
+# How long a hide must be "gone" before we finalize the event
+HIDE_END_TIMEOUT_SECONDS = 3.0
 
-# Save captured image for the event
+# After saving one hide, block another save briefly
+POST_EVENT_COOLDOWN_SECONDS = 3.0
+
+# Ignore very weak detections when building the saved inspection record
+MIN_EVENT_CONFIDENCE = 0.35
+
+# Save one captured image for the hide/event
 SAVE_CAPTURE_IMAGE = True
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -77,10 +83,11 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
-# Inspection event state
+# Event state
 inspection_active = False
 inspection_start_time = None
 last_defect_seen_time = None
+last_event_end_time = 0.0
 current_hide_id = None
 current_event_detections = {}
 current_event_best_frame = None
@@ -94,7 +101,11 @@ def make_hide_id():
 
 
 def filter_valid_detections(detections):
-    return [d for d in detections if d["type"] in VALID_DEFECT_CLASSES]
+    valid = []
+    for d in detections:
+        if d["type"] in VALID_DEFECT_CLASSES and d["confidence"] >= MIN_EVENT_CONFIDENCE:
+            valid.append(d)
+    return valid
 
 
 def merge_event_detections(existing_map, detections):
@@ -138,10 +149,29 @@ def send_inspection_to_api(hide_id, defects, snapshot_path=None):
         print(f"[INSPECTION] POST error: {e}")
 
 
+def start_inspection_event(frame_rgb, valid_detections, now):
+    global inspection_active, inspection_start_time, last_defect_seen_time
+    global current_hide_id, current_event_detections
+    global current_event_best_frame, current_event_best_score
+
+    inspection_active = True
+    inspection_start_time = now
+    last_defect_seen_time = now
+    current_hide_id = make_hide_id()
+    current_event_detections = {}
+    current_event_best_frame = frame_rgb.copy()
+    current_event_best_score = max(d["confidence"] for d in valid_detections)
+
+    merge_event_detections(current_event_detections, valid_detections)
+
+    print(f"[INSPECTION] Started {current_hide_id}")
+
+
 def finalize_inspection_event():
     global inspection_active, inspection_start_time, last_defect_seen_time
     global current_hide_id, current_event_detections
     global current_event_best_frame, current_event_best_score
+    global last_event_end_time
 
     if not inspection_active:
         return
@@ -168,26 +198,25 @@ def finalize_inspection_event():
     current_event_detections = {}
     current_event_best_frame = None
     current_event_best_score = 0.0
+    last_event_end_time = time.time()
 
 
 def update_inspection_event(frame_rgb, detections):
-    global inspection_active, inspection_start_time, last_defect_seen_time
-    global current_hide_id, current_event_detections
+    global inspection_active, last_defect_seen_time
     global current_event_best_frame, current_event_best_score
+    global last_event_end_time
 
     valid_detections = filter_valid_detections(detections)
     now = time.time()
 
-    # If a valid defect appears, start or update the event
+    # If defect appears, either start or update the current hide event
     if valid_detections:
+        # Do not immediately start a new event right after saving one
         if not inspection_active:
-            inspection_active = True
-            inspection_start_time = now
-            current_hide_id = make_hide_id()
-            current_event_detections = {}
-            current_event_best_frame = frame_rgb.copy()
-            current_event_best_score = max(d["confidence"] for d in valid_detections)
-            print(f"[INSPECTION] Started {current_hide_id}")
+            if now - last_event_end_time < POST_EVENT_COOLDOWN_SECONDS:
+                return
+            start_inspection_event(frame_rgb, valid_detections, now)
+            return
 
         last_defect_seen_time = now
         merge_event_detections(current_event_detections, valid_detections)
@@ -199,7 +228,8 @@ def update_inspection_event(frame_rgb, detections):
 
         return
 
-    # If no valid defect is seen for some time, end the event
+    # No valid defect in this frame:
+    # if an event is active and enough time passes, finalize once
     if inspection_active and last_defect_seen_time is not None:
         if now - last_defect_seen_time >= HIDE_END_TIMEOUT_SECONDS:
             finalize_inspection_event()
@@ -365,7 +395,8 @@ def home():
           JPEG quality: {JPEG_QUALITY}
         </p>
         <p>
-          Inspection event timeout: {HIDE_END_TIMEOUT_SECONDS}s
+          Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s |
+          Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s
         </p>
         <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
@@ -377,14 +408,15 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nEvent-capture settings:")
+    print("\nSingle-capture-per-hide settings:")
     print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
     print(f"- YOLO imgsz: {YOLO_IMGSZ}")
     print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
     print(f"- JPEG quality: {JPEG_QUALITY}")
     print(f"- Target FPS: {TARGET_FPS}")
     print(f"- Valid defect classes: {VALID_DEFECT_CLASSES}")
-    print(f"- Inspection timeout: {HIDE_END_TIMEOUT_SECONDS}s")
+    print(f"- Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s")
+    print(f"- Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s")
     print(f"- API: {INSPECTIONS_API_URL}\n")
 
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
