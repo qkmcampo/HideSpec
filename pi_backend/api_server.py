@@ -42,6 +42,14 @@ def init_db():
     """)
 
     conn.commit()
+
+    # Optional best-effort index for faster lookups and dedupe checks
+    cur.execute("""
+        CREATE INDEX IF NOT EXISTS idx_inspections_hide_id
+        ON inspections(hide_id)
+    """)
+
+    conn.commit()
     conn.close()
 
 
@@ -109,6 +117,13 @@ def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=No
 
     conn = get_db_connection()
     cur = conn.cursor()
+
+    # Soft dedupe by hide_id
+    cur.execute("SELECT * FROM inspections WHERE hide_id = ? LIMIT 1", (hide_id,))
+    existing = cur.fetchone()
+    if existing:
+        conn.close()
+        return row_to_inspection(existing)
 
     cur.execute("""
         INSERT INTO inspections (
