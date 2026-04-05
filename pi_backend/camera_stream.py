@@ -4,11 +4,14 @@ from picamera2 import Picamera2
 import cv2
 import time
 import threading
+import requests
+from pathlib import Path
+from datetime import datetime
 
 app = Flask(__name__)
 
 print("=" * 55)
-print("HIDESPEC - LOW LATENCY CAMERA STREAM SERVER")
+print("HIDESPEC - AUTO-SAVE CAMERA STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
@@ -25,6 +28,20 @@ DETECT_EVERY_N_FRAMES = 5
 JPEG_QUALITY = 50
 TARGET_FPS = 8
 FRAME_DELAY = 1.0 / TARGET_FPS
+
+# ============================================
+# AUTO-SAVE SETTINGS
+# ============================================
+API_BASE_URL = "http://127.0.0.1:5000"
+INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
+
+AUTO_SAVE_ENABLED = True
+AUTO_SAVE_COOLDOWN_SECONDS = 5
+SAVE_SNAPSHOT_ON_DETECTION = True
+
+BASE_DIR = Path(__file__).resolve().parent
+CAPTURES_DIR = BASE_DIR / "captures"
+CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 
 print("\nLoading YOLO model...")
 model = YOLO("best.pt")
@@ -53,7 +70,80 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
+last_auto_save_time = 0.0
+last_saved_hide_id = None
+
 state_lock = threading.Lock()
+
+
+def make_hide_id():
+    return f"HIDE-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
+
+
+def save_local_snapshot(frame_bgr, hide_id):
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"{hide_id}_{timestamp}.jpg"
+    file_path = CAPTURES_DIR / filename
+
+    ok = cv2.imwrite(str(file_path), frame_bgr)
+    if ok:
+        return str(file_path)
+    return None
+
+
+def post_inspection_record(hide_id, detections, snapshot_path=None):
+    payload = {
+        "hide_id": hide_id,
+        "defects": detections,
+        "snapshot_path": snapshot_path,
+    }
+
+    try:
+        response = requests.post(
+            INSPECTIONS_API_URL,
+            json=payload,
+            timeout=3
+        )
+        if response.ok:
+            print(f"[AUTO-SAVE] Inspection saved: {hide_id}")
+            return True
+        else:
+            print(f"[AUTO-SAVE] Failed: {response.status_code} {response.text}")
+            return False
+    except Exception as e:
+        print(f"[AUTO-SAVE] POST error: {e}")
+        return False
+
+
+def maybe_auto_save(frame_rgb, detections):
+    global last_auto_save_time, last_saved_hide_id
+
+    if not AUTO_SAVE_ENABLED:
+        return
+
+    if not detections:
+        return
+
+    now = time.time()
+    if now - last_auto_save_time < AUTO_SAVE_COOLDOWN_SECONDS:
+        return
+
+    hide_id = make_hide_id()
+    frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+
+    snapshot_path = None
+    if SAVE_SNAPSHOT_ON_DETECTION:
+        snapshot_path = save_local_snapshot(frame_bgr, hide_id)
+
+    ok = post_inspection_record(
+        hide_id=hide_id,
+        detections=detections,
+        snapshot_path=snapshot_path
+    )
+
+    if ok:
+        last_auto_save_time = now
+        last_saved_hide_id = hide_id
 
 
 def run_detection(frame):
@@ -80,7 +170,7 @@ def run_detection(frame):
             })
 
     last_detections = detections
-    return annotated
+    return annotated, detections
 
 
 def mjpeg_generator():
@@ -99,9 +189,13 @@ def mjpeg_generator():
                 current_frame_number = frame_counter
 
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
-                annotated = run_detection(frame)
+                annotated, detections = run_detection(frame)
+
                 with state_lock:
                     last_annotated = annotated
+
+                maybe_auto_save(frame, detections)
+
             else:
                 with state_lock:
                     if last_annotated is None:
@@ -167,6 +261,11 @@ def stream_status():
             "last_inference_ms": last_inference_ms,
             "last_encode_ms": last_encode_ms,
         },
+        "auto_save": {
+            "enabled": AUTO_SAVE_ENABLED,
+            "cooldown_seconds": AUTO_SAVE_COOLDOWN_SECONDS,
+            "last_saved_hide_id": last_saved_hide_id,
+        }
     })
 
 
@@ -179,7 +278,7 @@ def snapshot():
         if frame is None:
             frame = picam2.capture_array()
 
-        annotated = run_detection(frame)
+        annotated, _ = run_detection(frame)
         frame_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
 
         ok, buffer = cv2.imencode(
@@ -208,6 +307,10 @@ def home():
           Detect every: {DETECT_EVERY_N_FRAMES} frames |
           JPEG quality: {JPEG_QUALITY}
         </p>
+        <p>
+          Auto-save: {"ON" if AUTO_SAVE_ENABLED else "OFF"} |
+          Cooldown: {AUTO_SAVE_COOLDOWN_SECONDS}s
+        </p>
         <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
     </html>
@@ -218,11 +321,14 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nLow-lag settings:")
+    print("\nLow-lag + auto-save settings:")
     print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
     print(f"- YOLO imgsz: {YOLO_IMGSZ}")
     print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
     print(f"- JPEG quality: {JPEG_QUALITY}")
-    print(f"- Target FPS: {TARGET_FPS}\n")
+    print(f"- Target FPS: {TARGET_FPS}")
+    print(f"- Auto-save: {AUTO_SAVE_ENABLED}")
+    print(f"- Cooldown: {AUTO_SAVE_COOLDOWN_SECONDS}s")
+    print(f"- API: {INSPECTIONS_API_URL}\n")
 
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
