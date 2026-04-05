@@ -64,7 +64,6 @@ model = YOLO("best.pt")
 print("Model loaded: best.pt")
 print(f"Classes: {model.names}")
 
-# Arduino
 arduino = None
 arduino_connected = False
 try:
@@ -87,7 +86,6 @@ time.sleep(2)
 print(f"Camera started: {FRAME_WIDTH}x{FRAME_HEIGHT}")
 print("Capture loop started.\n")
 
-# Stream state
 last_raw_frame = None
 last_annotated = None
 last_detections = []
@@ -98,7 +96,6 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
-# Machine state
 servo_busy = False
 bad_triggered = False
 consecutive_bad_frames = 0
@@ -111,7 +108,6 @@ last_command_sent = None
 last_result = None
 last_result_time = None
 
-# Inspection state
 inspection_active = False
 current_hide_id = None
 current_event_detections = {}
@@ -282,6 +278,7 @@ def run_detection(frame):
 def update_machine_state(frame_rgb, detections):
     global bad_triggered, consecutive_bad_frames, missing_frames
     global leather_present, max_defects_seen, current_defect_count, current_result
+    global current_event_best_score, current_event_best_frame
 
     valid_detections = filter_target_detections(detections, CONF_THRESHOLD)
     defect_count = len(valid_detections)
@@ -299,8 +296,8 @@ def update_machine_state(frame_rgb, detections):
             merge_event_detections(current_event_detections, valid_detections)
             best_conf = max((d["confidence"] for d in valid_detections), default=0.0)
             if best_conf > current_event_best_score:
-                globals()["current_event_best_score"] = best_conf
-                globals()["current_event_best_frame"] = frame_rgb.copy()
+                current_event_best_score = best_conf
+                current_event_best_frame = frame_rgb.copy()
 
         if not bad_triggered and not servo_busy:
             if defect_count >= BAD_DEFECT_THRESHOLD:
@@ -311,6 +308,8 @@ def update_machine_state(frame_rgb, detections):
             if consecutive_bad_frames >= REQUIRED_CONSECUTIVE_BAD_FRAMES:
                 bad_triggered = True
                 current_result = "BAD"
+            else:
+                current_result = "INSPECTING"
         else:
             current_result = "BAD" if bad_triggered else "INSPECTING"
 
@@ -370,22 +369,8 @@ def mjpeg_generator():
 
             with state_lock:
                 frame_to_send = last_annotated.copy()
-                status_text = (
-                    "BAD DETECTED | Servo active" if servo_busy else
-                    f"INSPECTING | defects={current_defect_count} | max={max_defects_seen}" if leather_present else
-                    "SCANNING..."
-                )
 
             frame_bgr = cv2.cvtColor(frame_to_send, cv2.COLOR_RGB2BGR)
-            cv2.putText(
-                frame_bgr,
-                status_text,
-                (20, 30),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 0, 0),
-                2
-            )
 
             encode_start = time.time()
             ok, buffer = cv2.imencode(
