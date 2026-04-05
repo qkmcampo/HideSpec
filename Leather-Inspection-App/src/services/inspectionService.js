@@ -1,5 +1,5 @@
 import { io } from 'socket.io-client';
-import { API_BASE_URL, WS_URL } from '../config/api';
+import { API_BASE_URL, STREAM_URL, WS_URL } from '../config/api';
 
 let socket = null;
 
@@ -14,6 +14,27 @@ async function safeJson(response) {
 
 async function apiGet(path) {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    method: 'GET',
+    headers: {
+      Accept: 'application/json',
+    },
+  });
+
+  const data = await safeJson(response);
+
+  if (!response.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      `Request failed with status ${response.status}`;
+    throw new Error(message);
+  }
+
+  return data;
+}
+
+async function streamGet(path) {
+  const response = await fetch(`${STREAM_URL}${path}`, {
     method: 'GET',
     headers: {
       Accept: 'application/json',
@@ -63,13 +84,9 @@ export async function getLatestInspection() {
   try {
     return await apiGet('/api/inspections/latest');
   } catch (error) {
-    // 404 means no inspection yet; return null instead of crashing UI
-    if (
-      error.message?.toLowerCase().includes('no inspection has been recorded yet')
-    ) {
+    if (error.message?.toLowerCase().includes('no inspection has been recorded yet')) {
       return null;
     }
-
     console.error('getLatestInspection error:', error.message);
     return null;
   }
@@ -84,6 +101,15 @@ export async function getInspections(limit = 20) {
       count: 0,
       inspections: [],
     };
+  }
+}
+
+export async function getStreamStatus() {
+  try {
+    return await streamGet('/api/stream/status');
+  } catch (error) {
+    console.error('getStreamStatus error:', error.message);
+    return null;
   }
 }
 
@@ -149,17 +175,14 @@ export function connectWebSocket(handlers = {}) {
   });
 
   socket.on('connected', (data) => {
-    console.log('WebSocket connected message:', data);
     if (onConnectedMessage) onConnectedMessage(data);
   });
 
   socket.on('new_inspection', (data) => {
-    console.log('New inspection:', data);
     if (onNewInspection) onNewInspection(data);
   });
 
   socket.on('status_update', (data) => {
-    console.log('Status update:', data);
     if (onStatusUpdate) onStatusUpdate(data);
   });
 
@@ -177,16 +200,12 @@ export function disconnectWebSocket() {
   }
 }
 
-export function getSocket() {
-  return socket;
-}
-
 export default {
   getSystemStatus,
   getLatestInspection,
   getInspections,
+  getStreamStatus,
   resetHistory,
   connectWebSocket,
   disconnectWebSocket,
-  getSocket,
 };

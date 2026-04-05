@@ -47,7 +47,7 @@ function FadeSlideIn({ delay = 0, direction = 'up', children, style }) {
         Animated.spring(translate, { toValue: 0, friction: 6, tension: 40, useNativeDriver: true }),
       ]),
     ]).start();
-  }, []);
+  }, [delay, direction, opacity, translate]);
 
   const transform =
     direction === 'up' || direction === 'down'
@@ -62,7 +62,7 @@ function AnimatedNumber({ value, color }) {
 
   useEffect(() => {
     Animated.spring(scale, { toValue: 1, friction: 4, useNativeDriver: true }).start();
-  }, [value]);
+  }, [value, scale]);
 
   return (
     <Animated.Text
@@ -97,8 +97,8 @@ export default function AnalyticsScreen() {
     try {
       const [a, d, t] = await Promise.all([
         getAnalytics(period),
-        getDefectDistribution(),
-        getTimeline(period === 'all' ? 'month' : period),
+        getDefectDistribution(period),
+        getTimeline(period),
       ]);
 
       if (a) {
@@ -118,7 +118,7 @@ export default function AnalyticsScreen() {
       setLoading(false);
       setRefreshing(false);
     }
-  }, [period]);
+  }, [period, gaugeWidth]);
 
   useEffect(() => {
     setLoading(true);
