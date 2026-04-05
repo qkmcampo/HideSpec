@@ -5,14 +5,15 @@ import cv2
 import time
 import threading
 import requests
+import serial
 from pathlib import Path
 from datetime import datetime
 
 app = Flask(__name__)
 
 print("=" * 60)
-print("HIDESPEC - SINGLE CAPTURE PER HIDE STREAM SERVER")
-print("YOLOv8n Detection with Pi Camera Module 3")
+print("HIDESPEC - STREAM + MACHINE CONTROL")
+print("YOLOv8n Detection with Pi Camera Module 3 + Arduino")
 print("=" * 60)
 
 # ============================================
@@ -36,23 +37,22 @@ API_BASE_URL = "http://127.0.0.1:5000"
 INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
 
 # ============================================
-# INSPECTION EVENT SETTINGS
+# ARDUINO SETTINGS
+# ============================================
+ARDUINO_PORT = "/dev/ttyACM0"
+ARDUINO_BAUDRATE = 9600
+SERVO_HOLD_SECONDS = 2.0
+
+# ============================================
+# INSPECTION / MACHINE SETTINGS
 # ============================================
 VALID_DEFECT_CLASSES = {"color_defect", "hole", "fold"}
 
-# Lower threshold for deciding whether a hide/event is present
-EVENT_START_CONFIDENCE = 0.20
+CONF_THRESHOLD = 0.25
+BAD_DEFECT_THRESHOLD = 3
+REQUIRED_CONSECUTIVE_BAD_FRAMES = 3
+MISSING_FRAMES_TO_RESET = 15
 
-# Stronger threshold for saving defects into the final record
-MIN_EVENT_CONFIDENCE = 0.35
-
-# How long a hide must be "gone" before we finalize the event
-HIDE_END_TIMEOUT_SECONDS = 3.0
-
-# After saving one hide, block another save briefly
-POST_EVENT_COOLDOWN_SECONDS = 3.0
-
-# Save one captured image for the hide/event
 SAVE_CAPTURE_IMAGE = True
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -63,6 +63,17 @@ print("\nLoading YOLO model...")
 model = YOLO("best.pt")
 print("Model loaded: best.pt")
 print(f"Classes: {model.names}")
+
+# Arduino
+arduino = None
+arduino_connected = False
+try:
+    arduino = serial.Serial(ARDUINO_PORT, ARDUINO_BAUDRATE, timeout=1)
+    time.sleep(2)
+    arduino_connected = True
+    print(f"Arduino connected on {ARDUINO_PORT}")
+except Exception as e:
+    print(f"Arduino not connected: {e}")
 
 print("Starting camera...")
 picam2 = Picamera2()
@@ -76,6 +87,7 @@ time.sleep(2)
 print(f"Camera started: {FRAME_WIDTH}x{FRAME_HEIGHT}")
 print("Capture loop started.\n")
 
+# Stream state
 last_raw_frame = None
 last_annotated = None
 last_detections = []
@@ -86,11 +98,21 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
-# Event state
+# Machine state
+servo_busy = False
+bad_triggered = False
+consecutive_bad_frames = 0
+missing_frames = 0
+leather_present = False
+max_defects_seen = 0
+current_defect_count = 0
+current_result = "SCANNING"
+last_command_sent = None
+last_result = None
+last_result_time = None
+
+# Inspection state
 inspection_active = False
-inspection_start_time = None
-last_defect_seen_time = None
-last_event_end_time = 0.0
 current_hide_id = None
 current_event_detections = {}
 current_event_best_frame = None
@@ -112,17 +134,12 @@ def filter_target_detections(detections, min_conf=0.0):
 
 
 def merge_event_detections(existing_map, detections):
-    """
-    Keep only the highest-confidence detection per defect class
-    for one inspection event.
-    """
     for d in detections:
         defect_type = d["type"]
         if defect_type not in existing_map:
             existing_map[defect_type] = d
-        else:
-            if d["confidence"] > existing_map[defect_type]["confidence"]:
-                existing_map[defect_type] = d
+        elif d["confidence"] > existing_map[defect_type]["confidence"]:
+            existing_map[defect_type] = d
 
 
 def save_capture_image(frame_rgb, hide_id):
@@ -152,38 +169,67 @@ def send_inspection_to_api(hide_id, defects, snapshot_path=None):
         print(f"[INSPECTION] POST error: {e}")
 
 
-def start_inspection_event(frame_rgb, initial_detections, now):
-    global inspection_active, inspection_start_time, last_defect_seen_time
-    global current_hide_id, current_event_detections
-    global current_event_best_frame, current_event_best_score
+def send_command_to_arduino(command):
+    global servo_busy, last_command_sent, last_result_time
+
+    with state_lock:
+        if servo_busy:
+            return False
+        servo_busy = True
+        last_command_sent = command
+        last_result_time = datetime.utcnow().isoformat()
+
+    try:
+        if arduino_connected and arduino:
+            print(f"[ARDUINO] Sending command: {command}")
+            arduino.write(command.encode("utf-8"))
+            time.sleep(SERVO_HOLD_SECONDS)
+        else:
+            print(f"[ARDUINO] Simulated command: {command}")
+            time.sleep(1.0)
+        return True
+    except Exception as e:
+        print(f"[ARDUINO] Command error: {e}")
+        return False
+    finally:
+        with state_lock:
+            servo_busy = False
+
+
+def trigger_result(command):
+    threading.Thread(target=send_command_to_arduino, args=(command,), daemon=True).start()
+
+
+def start_inspection_event(frame_rgb, detections):
+    global inspection_active, current_hide_id
+    global current_event_detections, current_event_best_frame, current_event_best_score
+
+    if inspection_active:
+        return
 
     inspection_active = True
-    inspection_start_time = now
-    last_defect_seen_time = now
     current_hide_id = make_hide_id()
     current_event_detections = {}
     current_event_best_frame = frame_rgb.copy()
-    current_event_best_score = max((d["confidence"] for d in initial_detections), default=0.0)
+    current_event_best_score = max((d["confidence"] for d in detections), default=0.0)
 
-    if initial_detections:
-        merge_event_detections(current_event_detections, initial_detections)
+    if detections:
+        merge_event_detections(current_event_detections, detections)
 
     print(f"[INSPECTION] Started {current_hide_id}")
 
 
-def finalize_inspection_event():
-    global inspection_active, inspection_start_time, last_defect_seen_time
-    global current_hide_id, current_event_detections
-    global current_event_best_frame, current_event_best_score
-    global last_event_end_time
+def finalize_inspection_event(final_result):
+    global inspection_active, current_hide_id
+    global current_event_detections, current_event_best_frame, current_event_best_score
+    global last_result, last_result_time
 
-    if not inspection_active:
+    if not inspection_active or not current_hide_id:
         return
 
     defects = list(current_event_detections.values())
-    classification = "Good" if len(defects) == 0 else "Bad"
-
     snapshot_path = None
+
     if SAVE_CAPTURE_IMAGE and current_event_best_frame is not None:
         snapshot_path = save_capture_image(current_event_best_frame, current_hide_id)
 
@@ -193,55 +239,16 @@ def finalize_inspection_event():
         snapshot_path=snapshot_path
     )
 
-    print(f"[INSPECTION] Finalized {current_hide_id} -> {classification} ({len(defects)} defects)")
+    last_result = final_result
+    last_result_time = datetime.utcnow().isoformat()
+
+    print(f"[INSPECTION] Finalized {current_hide_id} -> {final_result} ({len(defects)} defects)")
 
     inspection_active = False
-    inspection_start_time = None
-    last_defect_seen_time = None
     current_hide_id = None
     current_event_detections = {}
     current_event_best_frame = None
     current_event_best_score = 0.0
-    last_event_end_time = time.time()
-
-
-def update_inspection_event(frame_rgb, detections):
-    global inspection_active, last_defect_seen_time
-    global current_event_best_frame, current_event_best_score
-    global last_event_end_time
-
-    target_detections = filter_target_detections(detections, EVENT_START_CONFIDENCE)
-    strong_detections = filter_target_detections(detections, MIN_EVENT_CONFIDENCE)
-    now = time.time()
-
-    with state_lock:
-        # If we see target defect classes, start or keep the current event alive
-        if target_detections:
-            if not inspection_active:
-                if now - last_event_end_time < POST_EVENT_COOLDOWN_SECONDS:
-                    return
-                start_inspection_event(frame_rgb, strong_detections or target_detections, now)
-                return
-
-            last_defect_seen_time = now
-
-            # Only save stronger detections into the final defect record
-            if strong_detections:
-                merge_event_detections(current_event_detections, strong_detections)
-
-            # Best frame can come from any target detection above event threshold
-            best_conf = max(d["confidence"] for d in target_detections)
-            if best_conf > current_event_best_score:
-                current_event_best_score = best_conf
-                current_event_best_frame = frame_rgb.copy()
-
-            return
-
-        # No target detections in this frame:
-        # if an event is active and enough time passes, finalize once
-        if inspection_active and last_defect_seen_time is not None:
-            if now - last_defect_seen_time >= HIDE_END_TIMEOUT_SECONDS:
-                finalize_inspection_event()
 
 
 def run_detection(frame):
@@ -261,14 +268,78 @@ def run_detection(frame):
             cls_id = int(box.cls[0].item())
             conf = float(box.conf[0].item())
             label = model.names.get(cls_id, str(cls_id))
-            detections.append({
-                "type": label,
-                "label": label,
-                "confidence": conf,
-            })
+            if label in VALID_DEFECT_CLASSES:
+                detections.append({
+                    "type": label,
+                    "label": label,
+                    "confidence": conf,
+                })
 
     last_detections = detections
     return annotated, detections
+
+
+def update_machine_state(frame_rgb, detections):
+    global bad_triggered, consecutive_bad_frames, missing_frames
+    global leather_present, max_defects_seen, current_defect_count, current_result
+
+    valid_detections = filter_target_detections(detections, CONF_THRESHOLD)
+    defect_count = len(valid_detections)
+    current_defect_count = defect_count
+
+    if defect_count > 0:
+        if not leather_present:
+            start_inspection_event(frame_rgb, valid_detections)
+
+        leather_present = True
+        missing_frames = 0
+        max_defects_seen = max(max_defects_seen, defect_count)
+
+        if inspection_active:
+            merge_event_detections(current_event_detections, valid_detections)
+            best_conf = max((d["confidence"] for d in valid_detections), default=0.0)
+            if best_conf > current_event_best_score:
+                globals()["current_event_best_score"] = best_conf
+                globals()["current_event_best_frame"] = frame_rgb.copy()
+
+        if not bad_triggered and not servo_busy:
+            if defect_count >= BAD_DEFECT_THRESHOLD:
+                consecutive_bad_frames += 1
+            else:
+                consecutive_bad_frames = 0
+
+            if consecutive_bad_frames >= REQUIRED_CONSECUTIVE_BAD_FRAMES:
+                bad_triggered = True
+                current_result = "BAD"
+        else:
+            current_result = "BAD" if bad_triggered else "INSPECTING"
+
+    else:
+        if leather_present:
+            missing_frames += 1
+
+        if leather_present and missing_frames >= MISSING_FRAMES_TO_RESET:
+            final_result = "BAD" if bad_triggered else "GOOD"
+            current_result = final_result
+
+            if final_result == "BAD":
+                trigger_result("B")
+            else:
+                trigger_result("G")
+
+            finalize_inspection_event(final_result)
+
+            print(f"[MACHINE] Leather finished. Result: {final_result}")
+
+            bad_triggered = False
+            consecutive_bad_frames = 0
+            missing_frames = 0
+            leather_present = False
+            max_defects_seen = 0
+            current_defect_count = 0
+            current_result = "SCANNING"
+        elif not leather_present:
+            current_result = "SCANNING"
 
 
 def mjpeg_generator():
@@ -288,9 +359,9 @@ def mjpeg_generator():
 
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
                 annotated, detections = run_detection(frame)
-                update_inspection_event(frame, detections)
 
                 with state_lock:
+                    update_machine_state(frame, detections)
                     last_annotated = annotated
             else:
                 with state_lock:
@@ -299,8 +370,22 @@ def mjpeg_generator():
 
             with state_lock:
                 frame_to_send = last_annotated.copy()
+                status_text = (
+                    "BAD DETECTED | Servo active" if servo_busy else
+                    f"INSPECTING | defects={current_defect_count} | max={max_defects_seen}" if leather_present else
+                    "SCANNING..."
+                )
 
             frame_bgr = cv2.cvtColor(frame_to_send, cv2.COLOR_RGB2BGR)
+            cv2.putText(
+                frame_bgr,
+                status_text,
+                (20, 30),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 0, 0),
+                2
+            )
 
             encode_start = time.time()
             ok, buffer = cv2.imencode(
@@ -321,7 +406,10 @@ def mjpeg_generator():
 
             yield (
                 b"--frame\r\n"
-                b"Content-Type: image/jpeg\r\n\r\n" + buffer.tobytes() + b"\r\n"
+                b"Content-Type: image/jpeg\r\n"
+                b"Cache-Control: no-cache, no-store, must-revalidate\r\n"
+                b"Pragma: no-cache\r\n"
+                b"Expires: 0\r\n\r\n" + buffer.tobytes() + b"\r\n"
             )
 
             loop_elapsed = time.time() - loop_start
@@ -329,6 +417,8 @@ def mjpeg_generator():
             if sleep_time > 0:
                 time.sleep(sleep_time)
 
+        except GeneratorExit:
+            break
         except Exception as e:
             print(f"Stream error: {e}")
             time.sleep(0.05)
@@ -336,37 +426,53 @@ def mjpeg_generator():
 
 @app.route("/video_feed")
 def video_feed():
-    return Response(
+    response = Response(
         mjpeg_generator(),
         mimetype="multipart/x-mixed-replace; boundary=frame"
     )
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    response.headers["X-Accel-Buffering"] = "no"
+    return response
 
 
 @app.route("/api/stream/status")
 def stream_status():
     with state_lock:
-        event_snapshot = {
-            "active": inspection_active,
-            "current_hide_id": current_hide_id,
-            "collected_defects": list(current_event_detections.values()),
-        }
-        detections_snapshot = list(last_detections)
-
-    return jsonify({
-        "status": "running",
-        "resolution": f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
-        "detections": detections_snapshot,
-        "inspection_event": event_snapshot,
-        "performance": {
-            "detect_every_n_frames": DETECT_EVERY_N_FRAMES,
-            "imgsz": YOLO_IMGSZ,
-            "jpeg_quality": JPEG_QUALITY,
-            "target_fps": TARGET_FPS,
-            "actual_stream_fps": stream_fps,
-            "last_inference_ms": last_inference_ms,
-            "last_encode_ms": last_encode_ms,
-        }
-    })
+        return jsonify({
+            "status": "running",
+            "resolution": f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
+            "detections": list(last_detections),
+            "inspection_event": {
+                "active": inspection_active,
+                "current_hide_id": current_hide_id,
+                "collected_defects": list(current_event_detections.values()),
+            },
+            "machine": {
+                "arduino_connected": arduino_connected,
+                "leather_present": leather_present,
+                "servo_busy": servo_busy,
+                "bad_triggered": bad_triggered,
+                "consecutive_bad_frames": consecutive_bad_frames,
+                "missing_frames": missing_frames,
+                "max_defects_seen": max_defects_seen,
+                "current_defect_count": current_defect_count,
+                "current_result": current_result,
+                "last_command_sent": last_command_sent,
+                "last_result": last_result,
+                "last_result_time": last_result_time,
+            },
+            "performance": {
+                "detect_every_n_frames": DETECT_EVERY_N_FRAMES,
+                "imgsz": YOLO_IMGSZ,
+                "jpeg_quality": JPEG_QUALITY,
+                "target_fps": TARGET_FPS,
+                "actual_stream_fps": stream_fps,
+                "last_inference_ms": last_inference_ms,
+                "last_encode_ms": last_encode_ms,
+            }
+        })
 
 
 @app.route("/api/stream/snapshot")
@@ -408,12 +514,9 @@ def home():
           JPEG quality: {JPEG_QUALITY}
         </p>
         <p>
-          Event start confidence: {EVENT_START_CONFIDENCE} |
-          Save confidence: {MIN_EVENT_CONFIDENCE}
-        </p>
-        <p>
-          Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s |
-          Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s
+          Bad threshold: {BAD_DEFECT_THRESHOLD} |
+          Required bad frames: {REQUIRED_CONSECUTIVE_BAD_FRAMES} |
+          Missing frames reset: {MISSING_FRAMES_TO_RESET}
         </p>
         <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
@@ -425,17 +528,5 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nSingle-capture-per-hide settings:")
-    print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
-    print(f"- YOLO imgsz: {YOLO_IMGSZ}")
-    print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
-    print(f"- JPEG quality: {JPEG_QUALITY}")
-    print(f"- Target FPS: {TARGET_FPS}")
-    print(f"- Valid defect classes: {VALID_DEFECT_CLASSES}")
-    print(f"- Event start confidence: {EVENT_START_CONFIDENCE}")
-    print(f"- Save confidence: {MIN_EVENT_CONFIDENCE}")
-    print(f"- Hide end timeout: {HIDE_END_TIMEOUT_SECONDS}s")
-    print(f"- Post-event cooldown: {POST_EVENT_COOLDOWN_SECONDS}s")
-    print(f"- API: {INSPECTIONS_API_URL}\n")
-
+    print(f"Arduino connected: {arduino_connected}")
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
