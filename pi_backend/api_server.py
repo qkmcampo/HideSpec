@@ -3,9 +3,8 @@ from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 import sqlite3
 import json
-import os
-from datetime import datetime
 from pathlib import Path
+from datetime import datetime
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "hidespec-secret-key"
@@ -87,7 +86,7 @@ def get_defect_type_summary():
     conn = get_db_connection()
     cur = conn.cursor()
 
-    cur.execute("SELECT defects_json FROM inspections ORDER BY created_at DESC")
+    cur.execute("SELECT defects_json FROM inspections ORDER BY datetime(created_at) DESC")
     rows = cur.fetchall()
     conn.close()
 
@@ -143,6 +142,33 @@ def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=No
     socketio.emit("status_update", get_session_summary())
 
     return inspection
+
+
+def reset_history(delete_captures=False):
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("DELETE FROM inspections")
+    conn.commit()
+    conn.close()
+
+    deleted_files = []
+
+    if delete_captures:
+        for file_path in CAPTURES_DIR.glob("*.jpg"):
+            try:
+                file_path.unlink()
+                deleted_files.append(file_path.name)
+            except Exception as e:
+                print(f"Failed to delete {file_path}: {e}")
+
+    socketio.emit("status_update", {
+        "total_inspected": 0,
+        "good_count": 0,
+        "bad_count": 0,
+        "defect_rate": 0,
+    })
+
+    return deleted_files
 
 
 @app.route("/api/status", methods=["GET"])
@@ -212,10 +238,6 @@ def analytics_summary():
 
 @app.route("/api/inspections", methods=["POST"])
 def create_inspection():
-    """
-    Temporary/manual endpoint so you can create inspection records now.
-    Later, this can be called automatically from your detection pipeline.
-    """
     data = request.get_json(silent=True) or {}
 
     hide_id = data.get("hide_id")
@@ -237,6 +259,21 @@ def create_inspection():
     return jsonify(inspection), 201
 
 
+@app.route("/api/history/reset", methods=["POST"])
+def reset_history_route():
+    data = request.get_json(silent=True) or {}
+    delete_captures = bool(data.get("delete_captures", False))
+
+    deleted_files = reset_history(delete_captures=delete_captures)
+
+    return jsonify({
+        "status": "ok",
+        "message": "Inspection history reset successfully",
+        "deleted_captures": deleted_files,
+        "deleted_capture_count": len(deleted_files),
+    })
+
+
 @socketio.on("connect")
 def handle_connect():
     emit("connected", {
@@ -254,12 +291,54 @@ def handle_disconnect():
 def home():
     return """
     <html>
+      <head>
+        <title>HideSpec API Server</title>
+      </head>
       <body style="font-family:Arial;background:#111;color:#fff;text-align:center;padding-top:40px;">
         <h1>HideSpec API Server</h1>
-        <p>API status: <a href="/api/status" style="color:#4da3ff;">/api/status</a></p>
-        <p>Latest inspection: <a href="/api/inspections/latest" style="color:#4da3ff;">/api/inspections/latest</a></p>
-        <p>Inspection history: <a href="/api/inspections" style="color:#4da3ff;">/api/inspections</a></p>
-        <p>Analytics summary: <a href="/api/analytics/summary" style="color:#4da3ff;">/api/analytics/summary</a></p>
+
+        <p><a href="/api/status" style="color:#4da3ff;">/api/status</a></p>
+        <p><a href="/api/inspections/latest" style="color:#4da3ff;">/api/inspections/latest</a></p>
+        <p><a href="/api/inspections" style="color:#4da3ff;">/api/inspections</a></p>
+        <p><a href="/api/analytics/summary" style="color:#4da3ff;">/api/analytics/summary</a></p>
+
+        <div style="margin-top:30px;">
+          <button
+            onclick="resetHistory(false)"
+            style="padding:12px 20px;background:#d73a49;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;margin-right:10px;"
+          >
+            Reset History Only
+          </button>
+
+          <button
+            onclick="resetHistory(true)"
+            style="padding:12px 20px;background:#8b0000;color:white;border:none;border-radius:8px;cursor:pointer;font-size:16px;"
+          >
+            Reset History + Captures
+          </button>
+        </div>
+
+        <script>
+          async function resetHistory(deleteCaptures) {
+            const label = deleteCaptures ? "history and captured images" : "history";
+            const ok = confirm("Delete all " + label + "?");
+            if (!ok) return;
+
+            const res = await fetch('/api/history/reset', {
+              method: 'POST',
+              headers: {
+                'Content-Type': 'application/json'
+              },
+              body: JSON.stringify({
+                delete_captures: deleteCaptures
+              })
+            });
+
+            const data = await res.json();
+            alert(data.message || 'History reset');
+            location.reload();
+          }
+        </script>
       </body>
     </html>
     """
@@ -269,10 +348,14 @@ if __name__ == "__main__":
     print("=" * 55)
     print("HIDESPEC - API SERVER")
     print("=" * 55)
+
     init_db()
+
     print(f"Database: {DB_PATH}")
     print("API status: http://0.0.0.0:5000/api/status")
     print("Latest inspection: http://0.0.0.0:5000/api/inspections/latest")
     print("Inspection history: http://0.0.0.0:5000/api/inspections")
     print("Analytics summary: http://0.0.0.0:5000/api/analytics/summary")
+    print("Reset history: http://0.0.0.0:5000/api/history/reset")
+
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
