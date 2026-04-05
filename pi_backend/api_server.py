@@ -1,180 +1,278 @@
-"""
-Leather Hide Inspection — API Server
-Runs on Raspberry Pi 5 to serve inspection data to the mobile/web app.
-Team 10 — TIP QC Capstone Project
-
-Install requirements:
-    pip install flask flask-cors flask-socketio --break-system-packages
-
-Run: python3 api_server.py
-API: http://0.0.0.0:5000
-"""
-
-from flask import Flask, jsonify, request, send_file
+from flask import Flask, jsonify, request
 from flask_cors import CORS
-from flask_socketio import SocketIO
-from db_manager import InspectionDB
-import os
+from flask_socketio import SocketIO, emit
+import sqlite3
 import json
-from datetime import datetime, timedelta
+import os
+from datetime import datetime
+from pathlib import Path
 
 app = Flask(__name__)
+app.config["SECRET_KEY"] = "hidespec-secret-key"
 
-# Allow ALL origins — critical for mobile/web app connection
-CORS(app, resources={r"/*": {"origins": "*"}})
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+CORS(app)
+socketio = SocketIO(app, cors_allowed_origins="*")
 
-db = InspectionDB()
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "hidespec.db"
+CAPTURES_DIR = BASE_DIR / "captures"
 
-# ─── System Status ──────────────────────────────────────────────
-@app.route('/api/status', methods=['GET'])
-def get_status():
-    """Returns current system status for the mobile app."""
-    stats = db.get_analytics()
+CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def get_db_connection():
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def init_db():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS inspections (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            hide_id TEXT NOT NULL,
+            classification TEXT NOT NULL,
+            total_defects INTEGER NOT NULL DEFAULT 0,
+            defects_json TEXT NOT NULL DEFAULT '[]',
+            snapshot_path TEXT,
+            created_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def row_to_inspection(row):
+    return {
+        "id": row["id"],
+        "hide_id": row["hide_id"],
+        "classification": row["classification"],
+        "total_defects": row["total_defects"],
+        "defects": json.loads(row["defects_json"] or "[]"),
+        "snapshot_path": row["snapshot_path"],
+        "created_at": row["created_at"],
+    }
+
+
+def get_session_summary():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT COUNT(*) AS total FROM inspections")
+    total_inspected = cur.fetchone()["total"]
+
+    cur.execute("SELECT COUNT(*) AS good_count FROM inspections WHERE classification = 'Good'")
+    good_count = cur.fetchone()["good_count"]
+
+    cur.execute("SELECT COUNT(*) AS bad_count FROM inspections WHERE classification = 'Bad'")
+    bad_count = cur.fetchone()["bad_count"]
+
+    conn.close()
+
+    defect_rate = round((bad_count / total_inspected) * 100, 2) if total_inspected > 0 else 0
+
+    return {
+        "total_inspected": total_inspected,
+        "good_count": good_count,
+        "bad_count": bad_count,
+        "defect_rate": defect_rate,
+    }
+
+
+def get_defect_type_summary():
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("SELECT defects_json FROM inspections ORDER BY created_at DESC")
+    rows = cur.fetchall()
+    conn.close()
+
+    counts = {}
+    for row in rows:
+        defects = json.loads(row["defects_json"] or "[]")
+        for defect in defects:
+            defect_type = defect.get("type", "unknown")
+            counts[defect_type] = counts.get(defect_type, 0) + 1
+
+    return counts
+
+
+def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=None):
+    if created_at is None:
+        created_at = datetime.utcnow().isoformat()
+
+    total_defects = len(defects)
+    classification = "Bad" if total_defects > 0 else "Good"
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO inspections (
+            hide_id,
+            classification,
+            total_defects,
+            defects_json,
+            snapshot_path,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?)
+    """, (
+        hide_id,
+        classification,
+        total_defects,
+        json.dumps(defects),
+        snapshot_path,
+        created_at,
+    ))
+
+    inspection_id = cur.lastrowid
+    conn.commit()
+
+    cur.execute("SELECT * FROM inspections WHERE id = ?", (inspection_id,))
+    row = cur.fetchone()
+    conn.close()
+
+    inspection = row_to_inspection(row)
+
+    socketio.emit("new_inspection", inspection)
+    socketio.emit("status_update", get_session_summary())
+
+    return inspection
+
+
+@app.route("/api/status", methods=["GET"])
+def api_status():
     return jsonify({
-        "status": "running",
-        "timestamp": datetime.now().isoformat(),
+        "status": "online",
+        "message": "HideSpec API server running",
         "system": {
             "model": "YOLOv8n",
             "platform": "Raspberry Pi 5",
             "camera": "Pi Camera Module 3",
-            "arduino": "connected"
         },
-        "session": {
-            "total_inspected": stats["total_inspections"],
-            "good_count": stats["good_count"],
-            "bad_count": stats["bad_count"],
-            "defect_rate": stats["defect_rate"]
+        "session": get_session_summary(),
+        "analytics": {
+            "defects_by_type": get_defect_type_summary()
         }
     })
 
 
-# ─── Inspection Records ────────────────────────────────────────
-@app.route('/api/inspections', methods=['GET'])
-def get_inspections():
-    limit = request.args.get('limit', 50, type=int)
-    offset = request.args.get('offset', 0, type=int)
-    classification = request.args.get('classification', None)
+@app.route("/api/inspections/latest", methods=["GET"])
+def latest_inspection():
+    conn = get_db_connection()
+    cur = conn.cursor()
 
-    inspections = db.get_inspections(
-        limit=limit,
-        offset=offset,
-        classification=classification
+    cur.execute("SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+
+    if row is None:
+        return jsonify({
+            "message": "No inspection has been recorded yet"
+        }), 404
+
+    return jsonify(row_to_inspection(row))
+
+
+@app.route("/api/inspections", methods=["GET"])
+def get_inspections():
+    limit = request.args.get("limit", default=20, type=int)
+    limit = max(1, min(limit, 100))
+
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT ?",
+        (limit,)
     )
+    rows = cur.fetchall()
+    conn.close()
+
+    inspections = [row_to_inspection(row) for row in rows]
+
     return jsonify({
         "count": len(inspections),
         "inspections": inspections
     })
 
 
-@app.route('/api/inspections/<int:inspection_id>', methods=['GET'])
-def get_inspection_detail(inspection_id):
-    inspection = db.get_inspection(inspection_id)
-    if inspection:
-        return jsonify(inspection)
-    return jsonify({"error": "Inspection not found"}), 404
-
-
-@app.route('/api/inspections/latest', methods=['GET'])
-def get_latest_inspection():
-    inspections = db.get_inspections(limit=1)
-    if inspections:
-        return jsonify(inspections[0])
-    return jsonify({"error": "No inspections yet"}), 404
-
-
-# ─── Analytics ──────────────────────────────────────────────────
-@app.route('/api/analytics', methods=['GET'])
-def get_analytics():
-    period = request.args.get('period', 'today')
-    analytics = db.get_analytics(period=period)
-    return jsonify(analytics)
-
-
-@app.route('/api/analytics/defect-distribution', methods=['GET'])
-def get_defect_distribution():
-    distribution = db.get_defect_distribution()
-    return jsonify({"defects": distribution})
-
-
-@app.route('/api/analytics/timeline', methods=['GET'])
-def get_timeline():
-    period = request.args.get('period', 'today')
-    timeline = db.get_timeline(period=period)
-    return jsonify({"timeline": timeline})
-
-
-# ─── Inspection Image ───────────────────────────────────────────
-@app.route('/api/inspections/<int:inspection_id>/image', methods=['GET'])
-def get_inspection_image(inspection_id):
-    inspection = db.get_inspection(inspection_id)
-    if inspection and inspection.get("image_path"):
-        image_path = inspection["image_path"]
-        if os.path.exists(image_path):
-            return send_file(image_path, mimetype='image/jpeg')
-    return jsonify({"error": "Image not found"}), 404
-
-
-# ─── Health Check (for debugging) ──────────────────────────────
-@app.route('/api/health', methods=['GET'])
-def health_check():
-    """Simple health check endpoint for debugging connection issues."""
+@app.route("/api/analytics/summary", methods=["GET"])
+def analytics_summary():
     return jsonify({
-        "status": "ok",
-        "server": "api_server.py",
-        "port": 5000,
-        "timestamp": datetime.now().isoformat(),
+        "session": get_session_summary(),
+        "defects_by_type": get_defect_type_summary()
     })
 
 
-# ─── WebSocket Events ───────────────────────────────────────────
-@socketio.on('connect')
+@app.route("/api/inspections", methods=["POST"])
+def create_inspection():
+    """
+    Temporary/manual endpoint so you can create inspection records now.
+    Later, this can be called automatically from your detection pipeline.
+    """
+    data = request.get_json(silent=True) or {}
+
+    hide_id = data.get("hide_id")
+    defects = data.get("defects", [])
+    snapshot_path = data.get("snapshot_path")
+
+    if not hide_id:
+        return jsonify({"error": "hide_id is required"}), 400
+
+    if not isinstance(defects, list):
+        return jsonify({"error": "defects must be a list"}), 400
+
+    inspection = create_inspection_record(
+        hide_id=hide_id,
+        defects=defects,
+        snapshot_path=snapshot_path
+    )
+
+    return jsonify(inspection), 201
+
+
+@socketio.on("connect")
 def handle_connect():
-    print("[WS] Mobile/web client connected")
-    stats = db.get_analytics()
-    socketio.emit('status_update', {
-        "total_inspected": stats["total_inspections"],
-        "good_count": stats["good_count"],
-        "bad_count": stats["bad_count"]
+    emit("connected", {
+        "message": "WebSocket connected",
+        "session": get_session_summary()
     })
 
 
-@socketio.on('disconnect')
+@socketio.on("disconnect")
 def handle_disconnect():
-    print("[WS] Mobile/web client disconnected")
+    print("Client disconnected")
 
 
-def notify_new_inspection(inspection_data):
+@app.route("/", methods=["GET"])
+def home():
+    return """
+    <html>
+      <body style="font-family:Arial;background:#111;color:#fff;text-align:center;padding-top:40px;">
+        <h1>HideSpec API Server</h1>
+        <p>API status: <a href="/api/status" style="color:#4da3ff;">/api/status</a></p>
+        <p>Latest inspection: <a href="/api/inspections/latest" style="color:#4da3ff;">/api/inspections/latest</a></p>
+        <p>Inspection history: <a href="/api/inspections" style="color:#4da3ff;">/api/inspections</a></p>
+        <p>Analytics summary: <a href="/api/analytics/summary" style="color:#4da3ff;">/api/analytics/summary</a></p>
+      </body>
+    </html>
     """
-    Call this from inference.py after each hide is processed.
-    Pushes result to all connected mobile/web clients.
-    """
-    socketio.emit('new_inspection', inspection_data)
-    stats = db.get_analytics()
-    socketio.emit('status_update', {
-        "total_inspected": stats["total_inspections"],
-        "good_count": stats["good_count"],
-        "bad_count": stats["bad_count"]
-    })
 
 
-# ─── Main ───────────────────────────────────────────────────────
-if __name__ == '__main__':
-    print()
+if __name__ == "__main__":
     print("=" * 55)
-    print("  HIDESPEC — DATA API SERVER")
-    print("  Leather Hide Inspection System")
-    print("  Team 10 · TIP QC")
+    print("HIDESPEC - API SERVER")
     print("=" * 55)
-    print()
-    print("  API running at:     http://0.0.0.0:5000")
-    print("  Health check:       http://0.0.0.0:5000/api/health")
-    print("  System status:      http://0.0.0.0:5000/api/status")
-    print("  Inspections:        http://0.0.0.0:5000/api/inspections")
-    print("  Analytics:          http://0.0.0.0:5000/api/analytics")
-    print()
-    print("  Make sure your phone/browser is on the same WiFi.")
-    print("=" * 55)
-    print()
-
-    socketio.run(app, host='0.0.0.0', port=5000, debug=False, allow_unsafe_werkzeug=True)
+    init_db()
+    print(f"Database: {DB_PATH}")
+    print("API status: http://0.0.0.0:5000/api/status")
+    print("Latest inspection: http://0.0.0.0:5000/api/inspections/latest")
+    print("Inspection history: http://0.0.0.0:5000/api/inspections")
+    print("Analytics summary: http://0.0.0.0:5000/api/analytics/summary")
+    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
