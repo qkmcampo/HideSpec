@@ -11,12 +11,12 @@ from datetime import datetime
 app = Flask(__name__)
 
 print("=" * 55)
-print("HIDESPEC - AUTO-SAVE CAMERA STREAM SERVER")
+print("HIDESPEC - EVENT CAPTURE CAMERA STREAM SERVER")
 print("YOLOv8n Detection with Pi Camera Module 3")
 print("=" * 55)
 
 # ============================================
-# LOW-LAG SETTINGS
+# LOW-LAG STREAM SETTINGS
 # ============================================
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
@@ -30,14 +30,21 @@ TARGET_FPS = 8
 FRAME_DELAY = 1.0 / TARGET_FPS
 
 # ============================================
-# AUTO-SAVE SETTINGS
+# API SETTINGS
 # ============================================
 API_BASE_URL = "http://127.0.0.1:5000"
 INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
 
-AUTO_SAVE_ENABLED = True
-AUTO_SAVE_COOLDOWN_SECONDS = 5
-SAVE_SNAPSHOT_ON_DETECTION = True
+# ============================================
+# INSPECTION EVENT SETTINGS
+# ============================================
+VALID_DEFECT_CLASSES = {"color_defect", "hole", "fold"}
+
+# End the inspection event after this many seconds without seeing a valid defect
+HIDE_END_TIMEOUT_SECONDS = 1.5
+
+# Save captured image for the event
+SAVE_CAPTURE_IMAGE = True
 
 BASE_DIR = Path(__file__).resolve().parent
 CAPTURES_DIR = BASE_DIR / "captures"
@@ -70,8 +77,14 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
-last_auto_save_time = 0.0
-last_saved_hide_id = None
+# Inspection event state
+inspection_active = False
+inspection_start_time = None
+last_defect_seen_time = None
+current_hide_id = None
+current_event_detections = {}
+current_event_best_frame = None
+current_event_best_score = 0.0
 
 state_lock = threading.Lock()
 
@@ -80,70 +93,116 @@ def make_hide_id():
     return f"HIDE-{datetime.now().strftime('%Y%m%d-%H%M%S')}"
 
 
-def save_local_snapshot(frame_bgr, hide_id):
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"{hide_id}_{timestamp}.jpg"
+def filter_valid_detections(detections):
+    return [d for d in detections if d["type"] in VALID_DEFECT_CLASSES]
+
+
+def merge_event_detections(existing_map, detections):
+    """
+    Keep only the highest-confidence detection per defect class
+    for one inspection event.
+    """
+    for d in detections:
+        defect_type = d["type"]
+        if defect_type not in existing_map:
+            existing_map[defect_type] = d
+        else:
+            if d["confidence"] > existing_map[defect_type]["confidence"]:
+                existing_map[defect_type] = d
+
+
+def save_capture_image(frame_rgb, hide_id):
+    frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+    filename = f"{hide_id}.jpg"
     file_path = CAPTURES_DIR / filename
-
     ok = cv2.imwrite(str(file_path), frame_bgr)
-    if ok:
-        return str(file_path)
-    return None
+    return str(file_path) if ok else None
 
 
-def post_inspection_record(hide_id, detections, snapshot_path=None):
+def send_inspection_to_api(hide_id, defects, snapshot_path=None):
     payload = {
         "hide_id": hide_id,
-        "defects": detections,
+        "defects": defects,
         "snapshot_path": snapshot_path,
     }
 
     try:
-        response = requests.post(
-            INSPECTIONS_API_URL,
-            json=payload,
-            timeout=3
-        )
+        response = requests.post(INSPECTIONS_API_URL, json=payload, timeout=3)
         if response.ok:
-            print(f"[AUTO-SAVE] Inspection saved: {hide_id}")
-            return True
+            total_defects = len(defects)
+            classification = "Good" if total_defects == 0 else "Bad"
+            print(f"[INSPECTION] Saved {hide_id} -> {classification} ({total_defects} defects)")
         else:
-            print(f"[AUTO-SAVE] Failed: {response.status_code} {response.text}")
-            return False
+            print(f"[INSPECTION] API failed: {response.status_code} {response.text}")
     except Exception as e:
-        print(f"[AUTO-SAVE] POST error: {e}")
-        return False
+        print(f"[INSPECTION] POST error: {e}")
 
 
-def maybe_auto_save(frame_rgb, detections):
-    global last_auto_save_time, last_saved_hide_id
+def finalize_inspection_event():
+    global inspection_active, inspection_start_time, last_defect_seen_time
+    global current_hide_id, current_event_detections
+    global current_event_best_frame, current_event_best_score
 
-    if not AUTO_SAVE_ENABLED:
+    if not inspection_active:
         return
 
-    if not detections:
-        return
-
-    now = time.time()
-    if now - last_auto_save_time < AUTO_SAVE_COOLDOWN_SECONDS:
-        return
-
-    hide_id = make_hide_id()
-    frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
+    defects = list(current_event_detections.values())
+    classification = "Good" if len(defects) == 0 else "Bad"
 
     snapshot_path = None
-    if SAVE_SNAPSHOT_ON_DETECTION:
-        snapshot_path = save_local_snapshot(frame_bgr, hide_id)
+    if SAVE_CAPTURE_IMAGE and current_event_best_frame is not None:
+        snapshot_path = save_capture_image(current_event_best_frame, current_hide_id)
 
-    ok = post_inspection_record(
-        hide_id=hide_id,
-        detections=detections,
+    send_inspection_to_api(
+        hide_id=current_hide_id,
+        defects=defects,
         snapshot_path=snapshot_path
     )
 
-    if ok:
-        last_auto_save_time = now
-        last_saved_hide_id = hide_id
+    print(f"[INSPECTION] Finalized {current_hide_id} -> {classification} ({len(defects)} defects)")
+
+    inspection_active = False
+    inspection_start_time = None
+    last_defect_seen_time = None
+    current_hide_id = None
+    current_event_detections = {}
+    current_event_best_frame = None
+    current_event_best_score = 0.0
+
+
+def update_inspection_event(frame_rgb, detections):
+    global inspection_active, inspection_start_time, last_defect_seen_time
+    global current_hide_id, current_event_detections
+    global current_event_best_frame, current_event_best_score
+
+    valid_detections = filter_valid_detections(detections)
+    now = time.time()
+
+    # If a valid defect appears, start or update the event
+    if valid_detections:
+        if not inspection_active:
+            inspection_active = True
+            inspection_start_time = now
+            current_hide_id = make_hide_id()
+            current_event_detections = {}
+            current_event_best_frame = frame_rgb.copy()
+            current_event_best_score = max(d["confidence"] for d in valid_detections)
+            print(f"[INSPECTION] Started {current_hide_id}")
+
+        last_defect_seen_time = now
+        merge_event_detections(current_event_detections, valid_detections)
+
+        best_conf = max(d["confidence"] for d in valid_detections)
+        if best_conf > current_event_best_score:
+            current_event_best_score = best_conf
+            current_event_best_frame = frame_rgb.copy()
+
+        return
+
+    # If no valid defect is seen for some time, end the event
+    if inspection_active and last_defect_seen_time is not None:
+        if now - last_defect_seen_time >= HIDE_END_TIMEOUT_SECONDS:
+            finalize_inspection_event()
 
 
 def run_detection(frame):
@@ -190,12 +249,10 @@ def mjpeg_generator():
 
             if last_annotated is None or current_frame_number % DETECT_EVERY_N_FRAMES == 0:
                 annotated, detections = run_detection(frame)
+                update_inspection_event(frame, detections)
 
                 with state_lock:
                     last_annotated = annotated
-
-                maybe_auto_save(frame, detections)
-
             else:
                 with state_lock:
                     if last_annotated is None:
@@ -252,6 +309,11 @@ def stream_status():
         "status": "running",
         "resolution": f"{FRAME_WIDTH}x{FRAME_HEIGHT}",
         "detections": last_detections,
+        "inspection_event": {
+            "active": inspection_active,
+            "current_hide_id": current_hide_id,
+            "collected_defects": list(current_event_detections.values()),
+        },
         "performance": {
             "detect_every_n_frames": DETECT_EVERY_N_FRAMES,
             "imgsz": YOLO_IMGSZ,
@@ -260,11 +322,6 @@ def stream_status():
             "actual_stream_fps": stream_fps,
             "last_inference_ms": last_inference_ms,
             "last_encode_ms": last_encode_ms,
-        },
-        "auto_save": {
-            "enabled": AUTO_SAVE_ENABLED,
-            "cooldown_seconds": AUTO_SAVE_COOLDOWN_SECONDS,
-            "last_saved_hide_id": last_saved_hide_id,
         }
     })
 
@@ -308,8 +365,7 @@ def home():
           JPEG quality: {JPEG_QUALITY}
         </p>
         <p>
-          Auto-save: {"ON" if AUTO_SAVE_ENABLED else "OFF"} |
-          Cooldown: {AUTO_SAVE_COOLDOWN_SECONDS}s
+          Inspection event timeout: {HIDE_END_TIMEOUT_SECONDS}s
         </p>
         <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
@@ -321,14 +377,14 @@ if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
     print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
-    print("\nLow-lag + auto-save settings:")
+    print("\nEvent-capture settings:")
     print(f"- Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT}")
     print(f"- YOLO imgsz: {YOLO_IMGSZ}")
     print(f"- Detect every: {DETECT_EVERY_N_FRAMES} frames")
     print(f"- JPEG quality: {JPEG_QUALITY}")
     print(f"- Target FPS: {TARGET_FPS}")
-    print(f"- Auto-save: {AUTO_SAVE_ENABLED}")
-    print(f"- Cooldown: {AUTO_SAVE_COOLDOWN_SECONDS}s")
+    print(f"- Valid defect classes: {VALID_DEFECT_CLASSES}")
+    print(f"- Inspection timeout: {HIDE_END_TIMEOUT_SECONDS}s")
     print(f"- API: {INSPECTIONS_API_URL}\n")
 
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
