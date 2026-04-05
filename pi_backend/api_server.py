@@ -4,7 +4,7 @@ from flask_socketio import SocketIO, emit
 import sqlite3
 import json
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "hidespec-secret-key"
@@ -39,14 +39,6 @@ def init_db():
             snapshot_path TEXT,
             created_at TEXT NOT NULL
         )
-    """)
-
-    conn.commit()
-
-    # Optional best-effort index for faster lookups and dedupe checks
-    cur.execute("""
-        CREATE INDEX IF NOT EXISTS idx_inspections_hide_id
-        ON inspections(hide_id)
     """)
 
     conn.commit()
@@ -108,6 +100,157 @@ def get_defect_type_summary():
     return counts
 
 
+def get_period_start(period):
+    now = datetime.utcnow()
+
+    if period == "today":
+        return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    if period == "week":
+        return now - timedelta(days=7)
+    if period == "month":
+        return now - timedelta(days=30)
+    if period == "all":
+        return None
+
+    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
+def get_analytics_summary(period="today"):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    start_dt = get_period_start(period)
+
+    if start_dt is None:
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total_inspections,
+                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good_count,
+                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad_count,
+                AVG(total_defects) AS avg_defects_per_hide
+            FROM inspections
+        """)
+    else:
+        cur.execute("""
+            SELECT
+                COUNT(*) AS total_inspections,
+                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good_count,
+                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad_count,
+                AVG(total_defects) AS avg_defects_per_hide
+            FROM inspections
+            WHERE datetime(created_at) >= datetime(?)
+        """, (start_dt.isoformat(),))
+
+    row = cur.fetchone()
+    conn.close()
+
+    total = row["total_inspections"] or 0
+    good = row["good_count"] or 0
+    bad = row["bad_count"] or 0
+    avg_defects = round(row["avg_defects_per_hide"] or 0, 2)
+    pass_rate = round((good / total) * 100, 2) if total > 0 else 0
+    defect_rate = round((bad / total) * 100, 2) if total > 0 else 0
+
+    return {
+        "period": period,
+        "total_inspections": total,
+        "good_count": good,
+        "bad_count": bad,
+        "pass_rate": pass_rate,
+        "defect_rate": defect_rate,
+        "avg_defects_per_hide": avg_defects,
+    }
+
+
+def get_defect_distribution(period="today"):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    start_dt = get_period_start(period)
+
+    if start_dt is None:
+        cur.execute("SELECT defects_json FROM inspections ORDER BY datetime(created_at) DESC")
+    else:
+        cur.execute("""
+            SELECT defects_json
+            FROM inspections
+            WHERE datetime(created_at) >= datetime(?)
+            ORDER BY datetime(created_at) DESC
+        """, (start_dt.isoformat(),))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    counts = {}
+    for row in rows:
+        defects = json.loads(row["defects_json"] or "[]")
+        for defect in defects:
+            defect_type = defect.get("type", "unknown")
+            counts[defect_type] = counts.get(defect_type, 0) + 1
+
+    defects = [
+        {"type": defect_type, "count": count}
+        for defect_type, count in counts.items()
+    ]
+    defects.sort(key=lambda x: x["count"], reverse=True)
+
+    return {
+        "period": period,
+        "defects": defects
+    }
+
+
+def get_timeline_data(period="today"):
+    conn = get_db_connection()
+    cur = conn.cursor()
+
+    start_dt = get_period_start(period)
+
+    if period == "today":
+        group_fmt = "%H:00"
+    elif period in ("week", "month"):
+        group_fmt = "%Y-%m-%d"
+    else:
+        group_fmt = "%Y-%m"
+
+    if start_dt is None:
+        cur.execute(f"""
+            SELECT
+                strftime('{group_fmt}', created_at) AS time_label,
+                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
+            FROM inspections
+            GROUP BY time_label
+            ORDER BY time_label ASC
+        """)
+    else:
+        cur.execute(f"""
+            SELECT
+                strftime('{group_fmt}', created_at) AS time_label,
+                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
+            FROM inspections
+            WHERE datetime(created_at) >= datetime(?)
+            GROUP BY time_label
+            ORDER BY time_label ASC
+        """, (start_dt.isoformat(),))
+
+    rows = cur.fetchall()
+    conn.close()
+
+    return {
+        "period": period,
+        "timeline": [
+            {
+                "time_label": row["time_label"] or "",
+                "good": row["good"] or 0,
+                "bad": row["bad"] or 0,
+            }
+            for row in rows
+        ]
+    }
+
+
 def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=None):
     if created_at is None:
         created_at = datetime.utcnow().isoformat()
@@ -117,13 +260,6 @@ def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=No
 
     conn = get_db_connection()
     cur = conn.cursor()
-
-    # Soft dedupe by hide_id
-    cur.execute("SELECT * FROM inspections WHERE hide_id = ? LIMIT 1", (hide_id,))
-    existing = cur.fetchone()
-    if existing:
-        conn.close()
-        return row_to_inspection(existing)
 
     cur.execute("""
         INSERT INTO inspections (
@@ -251,6 +387,24 @@ def analytics_summary():
     })
 
 
+@app.route("/api/analytics", methods=["GET"])
+def analytics_overview():
+    period = request.args.get("period", default="today", type=str)
+    return jsonify(get_analytics_summary(period))
+
+
+@app.route("/api/analytics/defects", methods=["GET"])
+def analytics_defects():
+    period = request.args.get("period", default="today", type=str)
+    return jsonify(get_defect_distribution(period))
+
+
+@app.route("/api/analytics/timeline", methods=["GET"])
+def analytics_timeline():
+    period = request.args.get("period", default="today", type=str)
+    return jsonify(get_timeline_data(period))
+
+
 @app.route("/api/inspections", methods=["POST"])
 def create_inspection():
     data = request.get_json(silent=True) or {}
@@ -316,6 +470,9 @@ def home():
         <p><a href="/api/inspections/latest" style="color:#4da3ff;">/api/inspections/latest</a></p>
         <p><a href="/api/inspections" style="color:#4da3ff;">/api/inspections</a></p>
         <p><a href="/api/analytics/summary" style="color:#4da3ff;">/api/analytics/summary</a></p>
+        <p><a href="/api/analytics?period=today" style="color:#4da3ff;">/api/analytics?period=today</a></p>
+        <p><a href="/api/analytics/defects?period=today" style="color:#4da3ff;">/api/analytics/defects?period=today</a></p>
+        <p><a href="/api/analytics/timeline?period=today" style="color:#4da3ff;">/api/analytics/timeline?period=today</a></p>
 
         <div style="margin-top:30px;">
           <button
@@ -371,6 +528,9 @@ if __name__ == "__main__":
     print("Latest inspection: http://0.0.0.0:5000/api/inspections/latest")
     print("Inspection history: http://0.0.0.0:5000/api/inspections")
     print("Analytics summary: http://0.0.0.0:5000/api/analytics/summary")
+    print("Analytics overview: http://0.0.0.0:5000/api/analytics?period=today")
+    print("Analytics defects: http://0.0.0.0:5000/api/analytics/defects?period=today")
+    print("Analytics timeline: http://0.0.0.0:5000/api/analytics/timeline?period=today")
     print("Reset history: http://0.0.0.0:5000/api/history/reset")
 
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
