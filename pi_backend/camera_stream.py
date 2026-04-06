@@ -13,7 +13,7 @@ model = YOLO("best.pt")
 arduino = None
 arduino_connected = False
 try:
-    arduino = serial.Serial("/dev/ttyACM1", 9600, timeout=1)
+    arduino = serial.Serial("/dev/ttyACM0", 9600, timeout=1)
     time.sleep(2)
     arduino_connected = True
 except Exception as e:
@@ -45,9 +45,12 @@ missing_frames = 0
 leather_present = False
 max_defects_seen = 0
 current_defect_count = 0
-current_status = "WAITING FOR LEATHER"
-last_command_sent = None
+current_status = "SCANNING..."
 last_result = None
+last_command_sent = None
+last_raw_frame = None
+last_annotated = None
+last_detections = []
 
 
 def trigger_bad_servo():
@@ -73,14 +76,14 @@ def generate_frames():
     global bad_triggered, servo_busy, consecutive_bad_frames
     global missing_frames, leather_present, max_defects_seen
     global current_defect_count, current_status, last_result
+    global last_raw_frame, last_annotated, last_detections
 
     frame_count = 0
-    last_annotated = None
     defect_count = 0
-    last_detections = []
 
     while True:
         frame = picam2.capture_array()
+        last_raw_frame = frame.copy()
         frame_count += 1
 
         if frame_count % 2 == 0 or last_annotated is None:
@@ -88,7 +91,7 @@ def generate_frames():
             result = results[0]
 
             defect_count = 0
-            detected_items = []
+            detections = []
 
             for box in result.boxes:
                 conf = float(box.conf[0])
@@ -96,14 +99,14 @@ def generate_frames():
                     defect_count += 1
                     cls_id = int(box.cls[0].item())
                     label = model.names.get(cls_id, str(cls_id))
-                    detected_items.append({
+                    detections.append({
                         "type": label,
                         "label": label,
                         "confidence": conf,
                     })
 
-            last_detections = detected_items
             current_defect_count = defect_count
+            last_detections = detections
             last_annotated = result.plot()
 
             with state_lock:
@@ -124,7 +127,6 @@ def generate_frames():
 
                     if consecutive_bad_frames >= REQUIRED_CONSECUTIVE_BAD_FRAMES:
                         bad_triggered = True
-                        current_status = "BAD DETECTED | Servo active"
                         threading.Thread(target=trigger_bad_servo, daemon=True).start()
 
                 # Reset when leather is gone
@@ -144,15 +146,14 @@ def generate_frames():
                     leather_present = False
                     max_defects_seen = 0
                     current_defect_count = 0
-                    current_status = "WAITING FOR LEATHER"
 
-                else:
-                    if servo_busy:
-                        current_status = "BAD DETECTED | Servo active"
-                    elif leather_present:
-                        current_status = f"INSPECTING | defects={defect_count} | max={max_defects_seen}"
-                    else:
-                        current_status = "WAITING FOR LEATHER"
+        with state_lock:
+            if servo_busy:
+                current_status = "BAD DETECTED | Servo active"
+            elif leather_present:
+                current_status = f"INSPECTING | defects={current_defect_count} | max={max_defects_seen}"
+            else:
+                current_status = "SCANNING..."
 
         display_frame = last_annotated.copy() if last_annotated is not None else frame.copy()
         display_frame = cv2.cvtColor(display_frame, cv2.COLOR_RGB2BGR)
@@ -203,8 +204,26 @@ def stream_status():
                 "current_result": current_status,
                 "last_command_sent": last_command_sent,
                 "last_result": last_result,
-            }
+            },
+            "detections": last_detections,
         })
+
+
+@app.route("/api/stream/snapshot")
+def snapshot():
+    if last_annotated is None:
+        return ("No snapshot available", 404)
+
+    frame_bgr = cv2.cvtColor(last_annotated, cv2.COLOR_RGB2BGR)
+    success, buffer = cv2.imencode(
+        ".jpg",
+        frame_bgr,
+        [int(cv2.IMWRITE_JPEG_QUALITY), 80]
+    )
+    if not success:
+        return ("Snapshot encode failed", 500)
+
+    return Response(buffer.tobytes(), mimetype="image/jpeg")
 
 
 @app.route("/")

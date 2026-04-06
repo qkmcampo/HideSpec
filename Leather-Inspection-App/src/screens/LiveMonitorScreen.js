@@ -4,11 +4,11 @@ import {
   Text,
   StyleSheet,
   ScrollView,
- RefreshControl,
- TouchableOpacity,
- ActivityIndicator,
- Alert,
- useWindowDimensions,
+  RefreshControl,
+  TouchableOpacity,
+  ActivityIndicator,
+  Alert,
+  useWindowDimensions,
   Platform,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -133,7 +133,7 @@ export default function LiveMonitorScreen() {
     missing_frames: 0,
     max_defects_seen: 0,
     current_defect_count: 0,
-    current_result: 'WAITING FOR LEATHER',
+    current_result: 'SCANNING...',
     last_command_sent: null,
     last_result: null,
   };
@@ -327,7 +327,7 @@ export default function LiveMonitorScreen() {
 
           <View style={[styles.liveStatusBar, { backgroundColor: C.card, borderColor: C.border }]}>
             <Text style={[styles.liveStatusText, { color: machine.leather_present ? C.accent : C.muted }]}>
-              {machine.current_result || 'WAITING FOR LEATHER'}
+              {machine.current_result || 'SCANNING...'}
             </Text>
           </View>
         </View>
@@ -350,7 +350,7 @@ export default function LiveMonitorScreen() {
             {renderMachineRow('Arduino', isArduinoOnline ? 'CONNECTED' : 'DISCONNECTED', isArduinoOnline ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
             {renderMachineRow('Leather Present', machine.leather_present ? 'YES' : 'NO', machine.leather_present ? C.accent : C.text)}
             {renderMachineRow('Servo', machine.servo_busy ? 'ACTIVE' : 'IDLE', machine.servo_busy ? (C.bad || '#f85149') : (C.good || '#2ea043'))}
-            {renderMachineRow('Current Result', machine.current_result || 'WAITING FOR LEATHER', machine.current_result === 'BAD DETECTED | Servo active' ? (C.bad || '#f85149') : C.accent)}
+            {renderMachineRow('Current Result', machine.current_result || 'SCANNING...', machine.current_result === 'BAD DETECTED | Servo active' ? (C.bad || '#f85149') : C.accent)}
             {renderMachineRow('Bad Frames', machine.consecutive_bad_frames ?? 0, C.text)}
             {renderMachineRow('Max Defects Seen', machine.max_defects_seen ?? 0, C.text)}
             {renderMachineRow('Current Defect Count', machine.current_defect_count ?? 0, C.text)}
