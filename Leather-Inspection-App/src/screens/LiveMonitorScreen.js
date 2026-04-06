@@ -30,10 +30,7 @@ const StreamSurface = memo(function StreamSurface({ borderColor }) {
     <!DOCTYPE html>
     <html>
       <head>
-        <meta
-          name="viewport"
-          content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"
-        />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
         <style>
           html, body {
             margin: 0;
@@ -108,7 +105,6 @@ export default function LiveMonitorScreen() {
 
   const [refreshing, setRefreshing] = useState(false);
   const [loading, setLoading] = useState(true);
-
   const [systemStatus, setSystemStatus] = useState(null);
   const [streamStatus, setStreamStatus] = useState(null);
   const [latestResult, setLatestResult] = useState(null);
@@ -137,7 +133,7 @@ export default function LiveMonitorScreen() {
     missing_frames: 0,
     max_defects_seen: 0,
     current_defect_count: 0,
-    current_result: 'SCANNING',
+    current_result: 'WAITING FOR LEATHER',
     last_command_sent: null,
     last_result: null,
     last_result_time: null,
@@ -150,6 +146,10 @@ export default function LiveMonitorScreen() {
   };
 
   const currentDetections = streamStatus?.detections || [];
+
+  const isStreamOnline = streamStatus?.status === 'running';
+  const isArduinoOnline = machine?.arduino_connected === true;
+  const isBackendOnline = systemStatus?.status === 'online';
 
   const cardStyle = useMemo(
     () => [
@@ -170,7 +170,7 @@ export default function LiveMonitorScreen() {
     if (machine.leather_present) {
       return `INSPECTING | defects=${machine.current_defect_count ?? 0} | max=${machine.max_defects_seen ?? 0}`;
     }
-    return 'SCANNING...';
+    return 'WAITING FOR LEATHER';
   }, [machine]);
 
   const loadMonitorData = useCallback(async ({ silent = false } = {}) => {
@@ -309,15 +309,7 @@ export default function LiveMonitorScreen() {
   };
 
   const renderStatCard = (label, value, accent) => (
-    <View
-      style={[
-        styles.statCard,
-        {
-          backgroundColor: C.bg,
-          borderColor: C.border,
-        },
-      ]}
-    >
+    <View style={[styles.statCard, { backgroundColor: C.bg, borderColor: C.border }]}>
       <Text style={[styles.statLabel, { color: C.muted }]}>{label}</Text>
       <Text style={[styles.statValue, { color: accent || C.text }]}>{value}</Text>
     </View>
@@ -326,13 +318,7 @@ export default function LiveMonitorScreen() {
   const renderDefectPill = (defect, index) => (
     <View
       key={`${defect.type || defect.label || 'unknown'}-${index}`}
-      style={[
-        styles.defectPill,
-        {
-          backgroundColor: C.bg,
-          borderColor: C.border,
-        },
-      ]}
+      style={[styles.defectPill, { backgroundColor: C.bg, borderColor: C.border }]}
     >
       <Text style={[styles.defectType, { color: C.text }]}>
         {defect.type || defect.label || 'unknown'}
@@ -346,15 +332,7 @@ export default function LiveMonitorScreen() {
   );
 
   const renderMachineRow = (label, value, accent) => (
-    <View
-      style={[
-        styles.machineRow,
-        {
-          backgroundColor: C.bg,
-          borderColor: C.border,
-        },
-      ]}
-    >
+    <View style={[styles.machineRow, { backgroundColor: C.bg, borderColor: C.border }]}>
       <Text style={[styles.machineLabel, { color: C.muted }]}>{label}</Text>
       <Text style={[styles.machineValue, { color: accent || C.text }]}>{value}</Text>
     </View>
@@ -377,28 +355,19 @@ export default function LiveMonitorScreen() {
       showsVerticalScrollIndicator={false}
     >
       <View style={[styles.contentWrap, { maxWidth: contentMaxWidth }]}>
-        <View
-          style={[
-            cardStyle,
-            {
-              backgroundColor: '#000',
-            },
-          ]}
-        >
+        <View style={[cardStyle, { backgroundColor: '#000' }]}>
           <View style={styles.sectionHeader}>
             <Text style={[styles.sectionTitle, { color: C.text }]}>Live Feed</Text>
             <View
               style={[
                 styles.liveBadge,
                 {
-                  backgroundColor:
-                    streamStatus?.status === 'running'
-                      ? C.goodSoft || 'rgba(46,160,67,0.12)'
-                      : C.badSoft || 'rgba(248,81,73,0.12)',
-                  borderColor:
-                    streamStatus?.status === 'running'
-                      ? C.goodSoftBorder || 'rgba(46,160,67,0.25)'
-                      : C.badSoftBorder || 'rgba(248,81,73,0.25)',
+                  backgroundColor: isStreamOnline
+                    ? C.goodSoft || 'rgba(46,160,67,0.12)'
+                    : C.badSoft || 'rgba(248,81,73,0.12)',
+                  borderColor: isStreamOnline
+                    ? C.goodSoftBorder || 'rgba(46,160,67,0.25)'
+                    : C.badSoftBorder || 'rgba(248,81,73,0.25)',
                 },
               ]}
             >
@@ -406,14 +375,11 @@ export default function LiveMonitorScreen() {
                 style={[
                   styles.liveBadgeText,
                   {
-                    color:
-                      streamStatus?.status === 'running'
-                        ? C.good || '#2ea043'
-                        : C.bad || '#f85149',
+                    color: isStreamOnline ? C.good || '#2ea043' : C.bad || '#f85149',
                   },
                 ]}
               >
-                {streamStatus?.status === 'running' ? 'LIVE' : 'OFFLINE'}
+                {isStreamOnline ? 'LIVE' : 'OFFLINE'}
               </Text>
             </View>
           </View>
@@ -424,23 +390,8 @@ export default function LiveMonitorScreen() {
             </View>
           </View>
 
-          <View
-            style={[
-              styles.liveStatusBar,
-              {
-                backgroundColor: C.card,
-                borderColor: C.border,
-              },
-            ]}
-          >
-            <Text
-              style={[
-                styles.liveStatusText,
-                {
-                  color: machine.leather_present ? C.accent : C.muted,
-                },
-              ]}
-            >
+          <View style={[styles.liveStatusBar, { backgroundColor: C.card, borderColor: C.border }]}>
+            <Text style={[styles.liveStatusText, { color: machine.leather_present ? C.accent : C.muted }]}>
               {liveStatusText}
             </Text>
           </View>
@@ -459,10 +410,12 @@ export default function LiveMonitorScreen() {
         <View style={cardStyle}>
           <Text style={[styles.sectionTitle, { color: C.text }]}>Machine / Segregation Status</Text>
           <View style={styles.machineGrid}>
-            {renderMachineRow('Arduino', machine.arduino_connected ? 'CONNECTED' : 'DISCONNECTED', machine.arduino_connected ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
+            {renderMachineRow('Backend API', isBackendOnline ? 'ONLINE' : 'OFFLINE', isBackendOnline ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
+            {renderMachineRow('Stream Server', isStreamOnline ? 'ONLINE' : 'OFFLINE', isStreamOnline ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
+            {renderMachineRow('Arduino', isArduinoOnline ? 'CONNECTED' : 'DISCONNECTED', isArduinoOnline ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
             {renderMachineRow('Leather Present', machine.leather_present ? 'YES' : 'NO', machine.leather_present ? C.accent : C.text)}
             {renderMachineRow('Servo', machine.servo_busy ? 'ACTIVE' : 'IDLE', machine.servo_busy ? (C.bad || '#f85149') : (C.good || '#2ea043'))}
-            {renderMachineRow('Current Result', machine.current_result || 'SCANNING', machine.current_result === 'BAD' ? (C.bad || '#f85149') : machine.current_result === 'GOOD' ? (C.good || '#2ea043') : C.accent)}
+            {renderMachineRow('Current Result', machine.current_result || 'WAITING FOR LEATHER', machine.current_result === 'BAD DETECTED' ? (C.bad || '#f85149') : C.accent)}
             {renderMachineRow('Bad Frames', machine.consecutive_bad_frames ?? 0, C.text)}
             {renderMachineRow('Max Defects Seen', machine.max_defects_seen ?? 0, C.text)}
             {renderMachineRow('Current Defect Count', machine.current_defect_count ?? 0, C.text)}
@@ -472,42 +425,13 @@ export default function LiveMonitorScreen() {
         </View>
 
         <View style={cardStyle}>
-          <Text style={[styles.sectionTitle, { color: C.text }]}>Detectable Defects</Text>
-
-          <View style={[styles.detectCard, { backgroundColor: C.card, borderColor: '#ff9b4a' }]}>
-            <Text style={[styles.detectTitle, { color: C.text }]}>
-              <Text style={{ color: '#ff9b4a' }}>
-                {currentDetections.some((d) => d.type === 'color_defect') ? '◆ ' : '◇ '}
-              </Text>
-              Color Defects
-            </Text>
-            <Text style={[styles.detectText, { color: C.muted }]}>
-              Discoloration, stains, or uneven dye on the leather surface
-            </Text>
-          </View>
-
-          <View style={[styles.detectCard, { backgroundColor: C.card, borderColor: '#ff5f57' }]}>
-            <Text style={[styles.detectTitle, { color: C.text }]}>
-              <Text style={{ color: '#ff5f57' }}>
-                {currentDetections.some((d) => d.type === 'hole') ? '◉ ' : '○ '}
-              </Text>
-              Holes
-            </Text>
-            <Text style={[styles.detectText, { color: C.muted }]}>
-              Punctures, perforations, or missing material in the hide
-            </Text>
-          </View>
-
-          <View style={[styles.detectCard, { backgroundColor: C.card, borderColor: '#4ea1ff' }]}>
-            <Text style={[styles.detectTitle, { color: C.text }]}>
-              <Text style={{ color: '#4ea1ff' }}>
-                {currentDetections.some((d) => d.type === 'fold') ? '▥ ' : '□ '}
-              </Text>
-              Folds
-            </Text>
-            <Text style={[styles.detectText, { color: C.muted }]}>
-              Creases, wrinkles, or folded areas affecting surface quality
-            </Text>
+          <Text style={[styles.sectionTitle, { color: C.text }]}>Current Frame Detections</Text>
+          <View style={styles.pillWrap}>
+            {currentDetections?.length ? (
+              currentDetections.map(renderDefectPill)
+            ) : (
+              <Text style={[styles.emptyText, { color: C.muted }]}>No live detections right now.</Text>
+            )}
           </View>
         </View>
 
@@ -543,15 +467,6 @@ export default function LiveMonitorScreen() {
               <Text style={[styles.emptyText, { color: C.muted }]}>No collected defects yet.</Text>
             )}
           </View>
-
-          <Text style={[styles.subheading, { color: C.text }]}>Current Frame Detections</Text>
-          <View style={styles.pillWrap}>
-            {currentDetections?.length ? (
-              currentDetections.map(renderDefectPill)
-            ) : (
-              <Text style={[styles.emptyText, { color: C.muted }]}>No live detections right now.</Text>
-            )}
-          </View>
         </View>
 
         <View style={cardStyle}>
@@ -572,12 +487,7 @@ export default function LiveMonitorScreen() {
                   },
                 ]}
               >
-                <Text
-                  style={[
-                    styles.resultBadge,
-                    { color: getClassificationTone(latestResult.classification).text },
-                  ]}
-                >
+                <Text style={[styles.resultBadge, { color: getClassificationTone(latestResult.classification).text }]}>
                   {getClassificationTone(latestResult.classification).label}
                 </Text>
                 <Text style={[styles.resultHideId, { color: C.text }]}>
@@ -619,28 +529,12 @@ export default function LiveMonitorScreen() {
               return (
                 <View
                   key={`${item.hide_id}-${index}`}
-                  style={[
-                    styles.historyItem,
-                    {
-                      backgroundColor: C.bg,
-                      borderColor: C.border,
-                    },
-                  ]}
+                  style={[styles.historyItem, { backgroundColor: C.bg, borderColor: C.border }]}
                 >
                   <View style={styles.historyTopRow}>
                     <Text style={[styles.historyHideId, { color: C.text }]}>{item.hide_id}</Text>
-                    <View
-                      style={[
-                        styles.historyBadge,
-                        {
-                          backgroundColor: tone.bg,
-                          borderColor: tone.border,
-                        },
-                      ]}
-                    >
-                      <Text style={[styles.historyBadgeText, { color: tone.text }]}>
-                        {item.classification}
-                      </Text>
+                    <View style={[styles.historyBadge, { backgroundColor: tone.bg, borderColor: tone.border }]}>
+                      <Text style={[styles.historyBadgeText, { color: tone.text }]}>{item.classification}</Text>
                     </View>
                   </View>
 
@@ -840,23 +734,6 @@ const styles = StyleSheet.create({
   machineValue: {
     fontSize: 15,
     fontWeight: '900',
-  },
-  detectCard: {
-    borderWidth: 1.5,
-    borderRadius: 14,
-    paddingVertical: 14,
-    paddingHorizontal: 14,
-    marginBottom: 10,
-  },
-  detectTitle: {
-    fontSize: 15,
-    fontWeight: '800',
-    marginBottom: 6,
-  },
-  detectText: {
-    fontSize: 13,
-    fontWeight: '500',
-    lineHeight: 20,
   },
   eventBanner: {
     borderWidth: 1,

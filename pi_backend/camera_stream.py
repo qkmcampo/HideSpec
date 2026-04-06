@@ -11,44 +11,26 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-print("=" * 60)
-print("HIDESPEC - STREAM + MACHINE CONTROL")
-print("YOLOv8n Detection with Pi Camera Module 3 + Arduino")
-print("=" * 60)
-
-# ============================================
-# LOW-LAG STREAM SETTINGS
-# ============================================
 FRAME_WIDTH = 640
 FRAME_HEIGHT = 480
 
 YOLO_IMGSZ = 224
 YOLO_CONF = 0.25
-DETECT_EVERY_N_FRAMES = 5
+DETECT_EVERY_N_FRAMES = 2
 
-JPEG_QUALITY = 50
+JPEG_QUALITY = 55
 TARGET_FPS = 8
 FRAME_DELAY = 1.0 / TARGET_FPS
 
-# ============================================
-# API SETTINGS
-# ============================================
 API_BASE_URL = "http://127.0.0.1:5000"
 INSPECTIONS_API_URL = f"{API_BASE_URL}/api/inspections"
 
-# ============================================
-# ARDUINO SETTINGS
-# ============================================
 ARDUINO_PORT = "/dev/ttyACM0"
 ARDUINO_BAUDRATE = 9600
-SERVO_HOLD_SECONDS = 2.0
+PI_WAIT_AFTER_BAD_SECONDS = 30
 
-# ============================================
-# INSPECTION / MACHINE SETTINGS
-# ============================================
 VALID_DEFECT_CLASSES = {"color_defect", "hole", "fold"}
 
-CONF_THRESHOLD = 0.25
 BAD_DEFECT_THRESHOLD = 3
 REQUIRED_CONSECUTIVE_BAD_FRAMES = 3
 MISSING_FRAMES_TO_RESET = 15
@@ -84,7 +66,6 @@ picam2.configure(config)
 picam2.start()
 time.sleep(2)
 print(f"Camera started: {FRAME_WIDTH}x{FRAME_HEIGHT}")
-print("Capture loop started.\n")
 
 last_raw_frame = None
 last_annotated = None
@@ -96,14 +77,14 @@ last_encode_ms = 0.0
 stream_fps = 0.0
 last_stream_time = time.time()
 
-servo_busy = False
 bad_triggered = False
+servo_busy = False
 consecutive_bad_frames = 0
 missing_frames = 0
 leather_present = False
 max_defects_seen = 0
 current_defect_count = 0
-current_result = "SCANNING"
+current_result = "WAITING FOR LEATHER"
 last_command_sent = None
 last_result = None
 last_result_time = None
@@ -121,10 +102,10 @@ def make_hide_id():
     return f"HIDE-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
 
 
-def filter_target_detections(detections, min_conf=0.0):
+def filter_valid_detections(detections):
     valid = []
     for d in detections:
-        if d["type"] in VALID_DEFECT_CLASSES and d["confidence"] >= min_conf:
+        if d["type"] in VALID_DEFECT_CLASSES and d["confidence"] >= YOLO_CONF:
             valid.append(d)
     return valid
 
@@ -157,7 +138,7 @@ def send_inspection_to_api(hide_id, defects, snapshot_path=None):
         response = requests.post(INSPECTIONS_API_URL, json=payload, timeout=3)
         if response.ok:
             total_defects = len(defects)
-            classification = "Good" if total_defects == 0 else "Bad"
+            classification = "Good" if total_defects <= 2 else "Bad"
             print(f"[INSPECTION] Saved {hide_id} -> {classification} ({total_defects} defects)")
         else:
             print(f"[INSPECTION] API failed: {response.status_code} {response.text}")
@@ -165,24 +146,24 @@ def send_inspection_to_api(hide_id, defects, snapshot_path=None):
         print(f"[INSPECTION] POST error: {e}")
 
 
-def send_command_to_arduino(command):
+def send_bad_command():
     global servo_busy, last_command_sent, last_result_time
 
     with state_lock:
         if servo_busy:
             return False
         servo_busy = True
-        last_command_sent = command
+        last_command_sent = "B"
         last_result_time = datetime.utcnow().isoformat()
 
     try:
         if arduino_connected and arduino:
-            print(f"[ARDUINO] Sending command: {command}")
-            arduino.write(command.encode("utf-8"))
-            time.sleep(SERVO_HOLD_SECONDS)
+            print("[ARDUINO] Sending B")
+            arduino.write(b'B')
         else:
-            print(f"[ARDUINO] Simulated command: {command}")
-            time.sleep(1.0)
+            print("[ARDUINO] Simulated B (Arduino not connected)")
+
+        time.sleep(PI_WAIT_AFTER_BAD_SECONDS)
         return True
     except Exception as e:
         print(f"[ARDUINO] Command error: {e}")
@@ -192,8 +173,8 @@ def send_command_to_arduino(command):
             servo_busy = False
 
 
-def trigger_result(command):
-    threading.Thread(target=send_command_to_arduino, args=(command,), daemon=True).start()
+def trigger_bad_servo():
+    threading.Thread(target=send_bad_command, daemon=True).start()
 
 
 def start_inspection_event(frame_rgb, detections):
@@ -210,12 +191,12 @@ def start_inspection_event(frame_rgb, detections):
     current_event_best_score = max((d["confidence"] for d in detections), default=0.0)
 
     if detections:
-        merge_event_detections(current_event_detections, detections)
+      merge_event_detections(current_event_detections, detections)
 
     print(f"[INSPECTION] Started {current_hide_id}")
 
 
-def finalize_inspection_event(final_result):
+def finalize_inspection_event():
     global inspection_active, current_hide_id
     global current_event_detections, current_event_best_frame, current_event_best_score
     global last_result, last_result_time
@@ -224,8 +205,9 @@ def finalize_inspection_event(final_result):
         return
 
     defects = list(current_event_detections.values())
-    snapshot_path = None
+    final_result = "Bad" if max_defects_seen >= BAD_DEFECT_THRESHOLD else "Good"
 
+    snapshot_path = None
     if SAVE_CAPTURE_IMAGE and current_event_best_frame is not None:
         snapshot_path = save_capture_image(current_event_best_frame, current_hide_id)
 
@@ -235,10 +217,10 @@ def finalize_inspection_event(final_result):
         snapshot_path=snapshot_path
     )
 
-    last_result = final_result
+    last_result = final_result.upper()
     last_result_time = datetime.utcnow().isoformat()
 
-    print(f"[INSPECTION] Finalized {current_hide_id} -> {final_result} ({len(defects)} defects)")
+    print(f"[INSPECTION] Finalized {current_hide_id} -> {final_result}")
 
     inspection_active = False
     current_hide_id = None
@@ -264,7 +246,7 @@ def run_detection(frame):
             cls_id = int(box.cls[0].item())
             conf = float(box.conf[0].item())
             label = model.names.get(cls_id, str(cls_id))
-            if label in VALID_DEFECT_CLASSES:
+            if label in VALID_DEFECT_CLASSES and conf >= YOLO_CONF:
                 detections.append({
                     "type": label,
                     "label": label,
@@ -280,7 +262,7 @@ def update_machine_state(frame_rgb, detections):
     global leather_present, max_defects_seen, current_defect_count, current_result
     global current_event_best_score, current_event_best_frame
 
-    valid_detections = filter_target_detections(detections, CONF_THRESHOLD)
+    valid_detections = filter_valid_detections(detections)
     defect_count = len(valid_detections)
     current_defect_count = defect_count
 
@@ -307,28 +289,26 @@ def update_machine_state(frame_rgb, detections):
 
             if consecutive_bad_frames >= REQUIRED_CONSECUTIVE_BAD_FRAMES:
                 bad_triggered = True
-                current_result = "BAD"
+                current_result = "BAD DETECTED"
+                trigger_bad_servo()
             else:
-                current_result = "INSPECTING"
+                current_result = f"INSPECTING"
         else:
-            current_result = "BAD" if bad_triggered else "INSPECTING"
+            current_result = "BAD DETECTED" if bad_triggered else "INSPECTING"
 
     else:
         if leather_present:
             missing_frames += 1
 
         if leather_present and missing_frames >= MISSING_FRAMES_TO_RESET:
-            final_result = "BAD" if bad_triggered else "GOOD"
-            current_result = final_result
+            print(f"[MACHINE] Leather finished. Max defects seen: {max_defects_seen}")
 
-            if final_result == "BAD":
-                trigger_result("B")
+            if bad_triggered:
+                print("[MACHINE] Result: BAD leather")
             else:
-                trigger_result("G")
+                print("[MACHINE] Result: GOOD leather")
 
-            finalize_inspection_event(final_result)
-
-            print(f"[MACHINE] Leather finished. Result: {final_result}")
+            finalize_inspection_event()
 
             bad_triggered = False
             consecutive_bad_frames = 0
@@ -336,9 +316,9 @@ def update_machine_state(frame_rgb, detections):
             leather_present = False
             max_defects_seen = 0
             current_defect_count = 0
-            current_result = "SCANNING"
+            current_result = "WAITING FOR LEATHER"
         elif not leather_present:
-            current_result = "SCANNING"
+            current_result = "WAITING FOR LEATHER"
 
 
 def mjpeg_generator():
@@ -460,49 +440,12 @@ def stream_status():
         })
 
 
-@app.route("/api/stream/snapshot")
-def snapshot():
-    try:
-        with state_lock:
-            frame = last_raw_frame.copy() if last_raw_frame is not None else None
-
-        if frame is None:
-            frame = picam2.capture_array()
-
-        annotated, _ = run_detection(frame)
-        frame_bgr = cv2.cvtColor(annotated, cv2.COLOR_RGB2BGR)
-
-        ok, buffer = cv2.imencode(
-            ".jpg",
-            frame_bgr,
-            [int(cv2.IMWRITE_JPEG_QUALITY), 70]
-        )
-        if not ok:
-            return ("Snapshot encode failed", 500)
-
-        return Response(buffer.tobytes(), mimetype="image/jpeg")
-
-    except Exception as e:
-        return (f"Snapshot failed: {e}", 500)
-
-
 @app.route("/")
 def home():
-    return f"""
+    return """
     <html>
       <body style="text-align:center;background:#111;color:white;font-family:Arial">
         <h1>HideSpec Live Stream</h1>
-        <p>
-          Resolution: {FRAME_WIDTH}x{FRAME_HEIGHT} |
-          YOLO imgsz: {YOLO_IMGSZ} |
-          Detect every: {DETECT_EVERY_N_FRAMES} frames |
-          JPEG quality: {JPEG_QUALITY}
-        </p>
-        <p>
-          Bad threshold: {BAD_DEFECT_THRESHOLD} |
-          Required bad frames: {REQUIRED_CONSECUTIVE_BAD_FRAMES} |
-          Missing frames reset: {MISSING_FRAMES_TO_RESET}
-        </p>
         <img src="/video_feed" width="900" style="max-width:100%;height:auto;border:1px solid #333;" />
       </body>
     </html>
@@ -512,6 +455,5 @@ def home():
 if __name__ == "__main__":
     print("Video stream: http://0.0.0.0:5001/video_feed")
     print("Stream status: http://0.0.0.0:5001/api/stream/status")
-    print("Snapshot: http://0.0.0.0:5001/api/stream/snapshot")
     print(f"Arduino connected: {arduino_connected}")
     app.run(host="0.0.0.0", port=5001, threaded=True, debug=False)
