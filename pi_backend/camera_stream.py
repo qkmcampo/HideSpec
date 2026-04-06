@@ -10,15 +10,25 @@ app = Flask(__name__)
 
 model = YOLO("best.pt")
 
+# -----------------------------
+# Arduino setup
+# -----------------------------
 arduino = None
 arduino_connected = False
+ARDUINO_PORT = "/dev/ttyACM0"   # change to ttyACM1 if needed
+ARDUINO_BAUDRATE = 9600
+
 try:
-    arduino = serial.Serial("/dev/ttyUSB0", 9600, timeout=1)
+    arduino = serial.Serial(ARDUINO_PORT, ARDUINO_BAUDRATE, timeout=1)
     time.sleep(2)
     arduino_connected = True
+    print(f"Arduino connected on {ARDUINO_PORT}")
 except Exception as e:
     print(f"Arduino not connected: {e}")
 
+# -----------------------------
+# Camera setup
+# -----------------------------
 picam2 = Picamera2()
 config = picam2.create_video_configuration(
     main={"size": (416, 416), "format": "RGB888"}
@@ -27,6 +37,9 @@ picam2.configure(config)
 picam2.start()
 time.sleep(2)
 
+# -----------------------------
+# Detection settings
+# -----------------------------
 CONF_THRESHOLD = 0.25
 BAD_DEFECT_THRESHOLD = 3
 
@@ -45,10 +58,9 @@ missing_frames = 0
 leather_present = False
 max_defects_seen = 0
 current_defect_count = 0
-current_status = "SCANNING..."
+current_status = "WAITING FOR LEATHER"
 last_result = None
 last_command_sent = None
-last_raw_frame = None
 last_annotated = None
 last_detections = []
 
@@ -66,6 +78,8 @@ def trigger_bad_servo():
         print("BAD leather detected -> sending B to Arduino")
         if arduino_connected and arduino:
             arduino.write(b'B')
+        else:
+            print("Arduino not connected, B not sent")
         time.sleep(20)
     finally:
         with state_lock:
@@ -76,14 +90,13 @@ def generate_frames():
     global bad_triggered, servo_busy, consecutive_bad_frames
     global missing_frames, leather_present, max_defects_seen
     global current_defect_count, current_status, last_result
-    global last_raw_frame, last_annotated, last_detections
+    global last_annotated, last_detections
 
     frame_count = 0
     defect_count = 0
 
     while True:
         frame = picam2.capture_array()
-        last_raw_frame = frame.copy()
         frame_count += 1
 
         if frame_count % 2 == 0 or last_annotated is None:
@@ -147,13 +160,12 @@ def generate_frames():
                     max_defects_seen = 0
                     current_defect_count = 0
 
-        with state_lock:
-            if servo_busy:
-                current_status = "BAD DETECTED | Servo active"
-            elif leather_present:
-                current_status = f"INSPECTING | defects={current_defect_count} | max={max_defects_seen}"
-            else:
-                current_status = "SCANNING..."
+                if servo_busy:
+                    current_status = "BAD DETECTED | Servo active"
+                elif leather_present:
+                    current_status = f"INSPECTING | defects={current_defect_count} | max={max_defects_seen}"
+                else:
+                    current_status = "WAITING FOR LEATHER"
 
         display_frame = last_annotated.copy() if last_annotated is not None else frame.copy()
         display_frame = cv2.cvtColor(display_frame, cv2.COLOR_RGB2BGR)
@@ -240,6 +252,8 @@ def index():
 
 if __name__ == "__main__":
     try:
+        print("Video stream: http://0.0.0.0:5001/video_feed")
+        print("Stream status: http://0.0.0.0:5001/api/stream/status")
         app.run(host="0.0.0.0", port=5001, threaded=True)
     finally:
         if arduino:
