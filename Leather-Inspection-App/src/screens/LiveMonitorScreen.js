@@ -4,11 +4,11 @@ import {
   Text,
   StyleSheet,
   ScrollView,
-  RefreshControl,
-  TouchableOpacity,
-  ActivityIndicator,
-  Alert,
-  useWindowDimensions,
+ RefreshControl,
+ TouchableOpacity,
+ ActivityIndicator,
+ Alert,
+ useWindowDimensions,
   Platform,
 } from 'react-native';
 import { WebView } from 'react-native-webview';
@@ -136,16 +136,7 @@ export default function LiveMonitorScreen() {
     current_result: 'WAITING FOR LEATHER',
     last_command_sent: null,
     last_result: null,
-    last_result_time: null,
   };
-
-  const inspectionEvent = streamStatus?.inspection_event || {
-    active: false,
-    current_hide_id: null,
-    collected_defects: [],
-  };
-
-  const currentDetections = streamStatus?.detections || [];
 
   const isStreamOnline = streamStatus?.status === 'running';
   const isArduinoOnline = machine?.arduino_connected === true;
@@ -164,14 +155,6 @@ export default function LiveMonitorScreen() {
 
   const contentMaxWidth = Math.min(width - 24, 1180);
   const feedMaxWidth = Math.min(width - 56, 760);
-
-  const liveStatusText = useMemo(() => {
-    if (machine.servo_busy) return 'BAD DETECTED | Servo active';
-    if (machine.leather_present) {
-      return `INSPECTING | defects=${machine.current_defect_count ?? 0} | max=${machine.max_defects_seen ?? 0}`;
-    }
-    return 'WAITING FOR LEATHER';
-  }, [machine]);
 
   const loadMonitorData = useCallback(async ({ silent = false } = {}) => {
     try {
@@ -205,13 +188,6 @@ export default function LiveMonitorScreen() {
           setSystemStatus((prev) => ({
             ...(prev || {}),
             status: prev?.status || 'online',
-            message: prev?.message || 'HideSpec API server running',
-            system: prev?.system || {
-              model: 'YOLOv8n',
-              platform: 'Raspberry Pi 5',
-              camera: 'Pi Camera Module 3',
-            },
-            analytics: prev?.analytics || { defects_by_type: {} },
             session: data.session,
           }));
         }
@@ -228,14 +204,7 @@ export default function LiveMonitorScreen() {
         if (data) {
           setSystemStatus((prev) => ({
             ...(prev || {}),
-            status: prev?.status || 'online',
-            message: prev?.message || 'HideSpec API server running',
-            system: prev?.system || {
-              model: 'YOLOv8n',
-              platform: 'Raspberry Pi 5',
-              camera: 'Pi Camera Module 3',
-            },
-            analytics: prev?.analytics || { defects_by_type: {} },
+            status: 'online',
             session: data,
           }));
         }
@@ -290,44 +259,10 @@ export default function LiveMonitorScreen() {
     );
   };
 
-  const getClassificationTone = (classification) => {
-    if (classification === 'Good') {
-      return {
-        bg: C.goodSoft || 'rgba(46,160,67,0.12)',
-        border: C.goodSoftBorder || 'rgba(46,160,67,0.25)',
-        text: C.good || '#2ea043',
-        label: 'GOOD',
-      };
-    }
-
-    return {
-      bg: C.badSoft || 'rgba(248,81,73,0.12)',
-      border: C.badSoftBorder || 'rgba(248,81,73,0.25)',
-      text: C.bad || '#f85149',
-      label: 'BAD',
-    };
-  };
-
   const renderStatCard = (label, value, accent) => (
     <View style={[styles.statCard, { backgroundColor: C.bg, borderColor: C.border }]}>
       <Text style={[styles.statLabel, { color: C.muted }]}>{label}</Text>
       <Text style={[styles.statValue, { color: accent || C.text }]}>{value}</Text>
-    </View>
-  );
-
-  const renderDefectPill = (defect, index) => (
-    <View
-      key={`${defect.type || defect.label || 'unknown'}-${index}`}
-      style={[styles.defectPill, { backgroundColor: C.bg, borderColor: C.border }]}
-    >
-      <Text style={[styles.defectType, { color: C.text }]}>
-        {defect.type || defect.label || 'unknown'}
-      </Text>
-      {typeof defect.confidence === 'number' ? (
-        <Text style={[styles.defectConfidence, { color: C.muted }]}>
-          {(defect.confidence * 100).toFixed(1)}%
-        </Text>
-      ) : null}
     </View>
   );
 
@@ -392,7 +327,7 @@ export default function LiveMonitorScreen() {
 
           <View style={[styles.liveStatusBar, { backgroundColor: C.card, borderColor: C.border }]}>
             <Text style={[styles.liveStatusText, { color: machine.leather_present ? C.accent : C.muted }]}>
-              {liveStatusText}
+              {machine.current_result || 'WAITING FOR LEATHER'}
             </Text>
           </View>
         </View>
@@ -415,7 +350,7 @@ export default function LiveMonitorScreen() {
             {renderMachineRow('Arduino', isArduinoOnline ? 'CONNECTED' : 'DISCONNECTED', isArduinoOnline ? (C.good || '#2ea043') : (C.bad || '#f85149'))}
             {renderMachineRow('Leather Present', machine.leather_present ? 'YES' : 'NO', machine.leather_present ? C.accent : C.text)}
             {renderMachineRow('Servo', machine.servo_busy ? 'ACTIVE' : 'IDLE', machine.servo_busy ? (C.bad || '#f85149') : (C.good || '#2ea043'))}
-            {renderMachineRow('Current Result', machine.current_result || 'WAITING FOR LEATHER', machine.current_result === 'BAD DETECTED' ? (C.bad || '#f85149') : C.accent)}
+            {renderMachineRow('Current Result', machine.current_result || 'WAITING FOR LEATHER', machine.current_result === 'BAD DETECTED | Servo active' ? (C.bad || '#f85149') : C.accent)}
             {renderMachineRow('Bad Frames', machine.consecutive_bad_frames ?? 0, C.text)}
             {renderMachineRow('Max Defects Seen', machine.max_defects_seen ?? 0, C.text)}
             {renderMachineRow('Current Defect Count', machine.current_defect_count ?? 0, C.text)}
@@ -425,136 +360,17 @@ export default function LiveMonitorScreen() {
         </View>
 
         <View style={cardStyle}>
-          <Text style={[styles.sectionTitle, { color: C.text }]}>Current Frame Detections</Text>
-          <View style={styles.pillWrap}>
-            {currentDetections?.length ? (
-              currentDetections.map(renderDefectPill)
-            ) : (
-              <Text style={[styles.emptyText, { color: C.muted }]}>No live detections right now.</Text>
-            )}
-          </View>
-        </View>
-
-        <View style={cardStyle}>
-          <Text style={[styles.sectionTitle, { color: C.text }]}>Inspection Event</Text>
-
-          <View
-            style={[
-              styles.eventBanner,
-              {
-                backgroundColor: inspectionEvent.active
-                  ? C.accentSoft || 'rgba(88,166,255,0.10)'
-                  : C.bg,
-                borderColor: inspectionEvent.active
-                  ? C.accentSoftBorder || 'rgba(88,166,255,0.25)'
-                  : C.border,
-              },
-            ]}
-          >
-            <Text style={[styles.eventState, { color: inspectionEvent.active ? C.accent : C.muted }]}>
-              {inspectionEvent.active ? 'ACTIVE HIDE EVENT' : 'NO ACTIVE HIDE EVENT'}
-            </Text>
-            <Text style={[styles.eventSubtext, { color: C.text }]}>
-              Hide ID: {inspectionEvent.current_hide_id || '—'}
-            </Text>
-          </View>
-
-          <Text style={[styles.subheading, { color: C.text }]}>Collected Defects</Text>
-          <View style={styles.pillWrap}>
-            {inspectionEvent.collected_defects?.length ? (
-              inspectionEvent.collected_defects.map(renderDefectPill)
-            ) : (
-              <Text style={[styles.emptyText, { color: C.muted }]}>No collected defects yet.</Text>
-            )}
-          </View>
-        </View>
-
-        <View style={cardStyle}>
           <Text style={[styles.sectionTitle, { color: C.text }]}>Latest Inspection</Text>
-
           {!latestResult ? (
-            <Text style={[styles.emptyText, { color: C.muted }]}>
-              No inspection has been recorded yet.
-            </Text>
+            <Text style={[styles.loadingText, { color: C.muted }]}>No inspection recorded yet.</Text>
           ) : (
-            <>
-              <View
-                style={[
-                  styles.resultBanner,
-                  {
-                    backgroundColor: getClassificationTone(latestResult.classification).bg,
-                    borderColor: getClassificationTone(latestResult.classification).border,
-                  },
-                ]}
-              >
-                <Text style={[styles.resultBadge, { color: getClassificationTone(latestResult.classification).text }]}>
-                  {getClassificationTone(latestResult.classification).label}
-                </Text>
-                <Text style={[styles.resultHideId, { color: C.text }]}>
-                  {latestResult.hide_id}
-                </Text>
-              </View>
-
-              <View style={styles.latestMetaRow}>
-                <Text style={[styles.latestMetaText, { color: C.muted }]}>
-                  Total Defects: <Text style={{ color: C.text }}>{latestResult.total_defects ?? 0}</Text>
-                </Text>
-                <Text style={[styles.latestMetaText, { color: C.muted }]}>
-                  Created: <Text style={{ color: C.text }}>{latestResult.created_at || '--'}</Text>
-                </Text>
-              </View>
-
-              <View style={styles.pillWrap}>
-                {latestResult.defects?.length ? (
-                  latestResult.defects.map(renderDefectPill)
-                ) : (
-                  <Text style={[styles.emptyText, { color: C.muted }]}>
-                    This inspection was marked Good with no saved defects.
-                  </Text>
-                )}
-              </View>
-            </>
-          )}
-        </View>
-
-        <View style={cardStyle}>
-          <Text style={[styles.sectionTitle, { color: C.text }]}>Recent History</Text>
-
-          {!recentHistory.length ? (
-            <Text style={[styles.emptyText, { color: C.muted }]}>No recent inspection history yet.</Text>
-          ) : (
-            recentHistory.map((item, index) => {
-              const tone = getClassificationTone(item.classification);
-
-              return (
-                <View
-                  key={`${item.hide_id}-${index}`}
-                  style={[styles.historyItem, { backgroundColor: C.bg, borderColor: C.border }]}
-                >
-                  <View style={styles.historyTopRow}>
-                    <Text style={[styles.historyHideId, { color: C.text }]}>{item.hide_id}</Text>
-                    <View style={[styles.historyBadge, { backgroundColor: tone.bg, borderColor: tone.border }]}>
-                      <Text style={[styles.historyBadgeText, { color: tone.text }]}>{item.classification}</Text>
-                    </View>
-                  </View>
-
-                  <Text style={[styles.historyMeta, { color: C.muted }]}>
-                    Defects: {item.total_defects ?? 0}
-                  </Text>
-                  <Text style={[styles.historyMeta, { color: C.muted }]}>
-                    {item.created_at || '--'}
-                  </Text>
-
-                  <View style={styles.pillWrap}>
-                    {item.defects?.length ? (
-                      item.defects.map(renderDefectPill)
-                    ) : (
-                      <Text style={[styles.emptyTextSmall, { color: C.muted }]}>No saved defects.</Text>
-                    )}
-                  </View>
-                </View>
-              );
-            })
+            <View>
+              <Text style={{ color: C.text, fontWeight: '800', fontSize: 15 }}>{latestResult.hide_id}</Text>
+              <Text style={{ color: C.muted, marginTop: 6 }}>
+                Result: {latestResult.classification} | Defects: {latestResult.total_defects ?? 0}
+              </Text>
+              <Text style={{ color: C.muted, marginTop: 4 }}>{latestResult.created_at || '--'}</Text>
+            </View>
           )}
         </View>
 
@@ -581,21 +397,6 @@ export default function LiveMonitorScreen() {
             >
               <Text style={[styles.actionButtonText, { color: C.bad || '#f85149' }]}>
                 Reset History
-              </Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[
-                styles.actionButton,
-                {
-                  backgroundColor: C.badSoft || 'rgba(248,81,73,0.10)',
-                  borderColor: C.badSoftBorder || 'rgba(248,81,73,0.20)',
-                },
-              ]}
-              onPress={() => handleReset(true)}
-            >
-              <Text style={[styles.actionButtonText, { color: C.bad || '#f85149' }]}>
-                Reset + Captures
               </Text>
             </TouchableOpacity>
           </View>
@@ -734,117 +535,6 @@ const styles = StyleSheet.create({
   machineValue: {
     fontSize: 15,
     fontWeight: '900',
-  },
-  eventBanner: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
-  },
-  eventState: {
-    fontSize: 13,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  eventSubtext: {
-    marginTop: 6,
-    fontSize: 13,
-    fontWeight: '600',
-  },
-  subheading: {
-    fontSize: 13,
-    fontWeight: '800',
-    marginTop: 8,
-    marginBottom: 8,
-    letterSpacing: 0.3,
-  },
-  pillWrap: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-  },
-  defectPill: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 7,
-    marginRight: 8,
-    marginBottom: 8,
-  },
-  defectType: {
-    fontSize: 12,
-    fontWeight: '800',
-  },
-  defectConfidence: {
-    fontSize: 10,
-    fontWeight: '600',
-    marginTop: 2,
-  },
-  emptyText: {
-    fontSize: 13,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  emptyTextSmall: {
-    fontSize: 12,
-    fontWeight: '500',
-  },
-  resultBanner: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 12,
-  },
-  resultBadge: {
-    fontSize: 12,
-    fontWeight: '900',
-    letterSpacing: 1,
-    marginBottom: 6,
-  },
-  resultHideId: {
-    fontSize: 15,
-    fontWeight: '800',
-  },
-  latestMetaRow: {
-    marginBottom: 10,
-  },
-  latestMetaText: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  historyItem: {
-    borderWidth: 1,
-    borderRadius: 14,
-    padding: 12,
-    marginBottom: 10,
-  },
-  historyTopRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  historyHideId: {
-    fontSize: 14,
-    fontWeight: '800',
-    flex: 1,
-    marginRight: 8,
-  },
-  historyBadge: {
-    borderWidth: 1,
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-  },
-  historyBadgeText: {
-    fontSize: 11,
-    fontWeight: '900',
-    letterSpacing: 0.8,
-  },
-  historyMeta: {
-    fontSize: 12,
-    fontWeight: '600',
-    marginTop: 4,
-    marginBottom: 2,
   },
   actionRow: {
     gap: 10,

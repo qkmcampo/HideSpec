@@ -61,20 +61,11 @@ export async function getSystemStatus() {
     console.error('getSystemStatus error:', error.message);
     return {
       status: 'offline',
-      message: error.message,
-      system: {
-        model: 'YOLOv8n',
-        platform: 'Raspberry Pi 5',
-        camera: 'Pi Camera Module 3',
-      },
       session: {
         total_inspected: 0,
         good_count: 0,
         bad_count: 0,
         defect_rate: 0,
-      },
-      analytics: {
-        defects_by_type: {},
       },
     };
   }
@@ -84,10 +75,6 @@ export async function getLatestInspection() {
   try {
     return await apiGet('/api/inspections/latest');
   } catch (error) {
-    if (error.message?.toLowerCase().includes('no inspection has been recorded yet')) {
-      return null;
-    }
-    console.error('getLatestInspection error:', error.message);
     return null;
   }
 }
@@ -96,7 +83,6 @@ export async function getInspections(limit = 20) {
   try {
     return await apiGet(`/api/inspections?limit=${limit}`);
   } catch (error) {
-    console.error('getInspections error:', error.message);
     return {
       count: 0,
       inspections: [],
@@ -114,33 +100,28 @@ export async function getStreamStatus() {
 }
 
 export async function resetHistory(deleteCaptures = false) {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Accept: 'application/json',
-      },
-      body: JSON.stringify({
-        delete_captures: deleteCaptures,
-      }),
-    });
+  const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+    },
+    body: JSON.stringify({
+      delete_captures: deleteCaptures,
+    }),
+  });
 
-    const data = await safeJson(response);
+  const data = await safeJson(response);
 
-    if (!response.ok) {
-      const message =
-        data?.error ||
-        data?.message ||
-        `Request failed with status ${response.status}`;
-      throw new Error(message);
-    }
-
-    return data;
-  } catch (error) {
-    console.error('resetHistory error:', error.message);
-    throw error;
+  if (!response.ok) {
+    const message =
+      data?.error ||
+      data?.message ||
+      `Request failed with status ${response.status}`;
+    throw new Error(message);
   }
+
+  return data;
 }
 
 export function connectWebSocket(handlers = {}) {
@@ -165,12 +146,10 @@ export function connectWebSocket(handlers = {}) {
   });
 
   socket.on('connect', () => {
-    console.log('WebSocket connected');
     if (onConnect) onConnect();
   });
 
   socket.on('disconnect', () => {
-    console.log('WebSocket disconnected');
     if (onDisconnect) onDisconnect();
   });
 
