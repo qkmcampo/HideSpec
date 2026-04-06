@@ -13,7 +13,7 @@ model = YOLO("best.pt")
 arduino = None
 arduino_connected = False
 try:
-    arduino = serial.Serial("/dev/ttyACM0", 9600, timeout=1)
+    arduino = serial.Serial("/dev/ttyACM1", 9600, timeout=1)
     time.sleep(2)
     arduino_connected = True
 except Exception as e:
