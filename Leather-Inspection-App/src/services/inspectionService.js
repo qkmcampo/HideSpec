@@ -5,6 +5,7 @@ let socket = null;
 
 async function safeJson(response) {
   const text = await response.text();
+
   try {
     return text ? JSON.parse(text) : null;
   } catch (error) {
@@ -75,6 +76,7 @@ export async function getLatestInspection() {
   try {
     return await apiGet('/api/inspections/latest');
   } catch (error) {
+    console.error('getLatestInspection error:', error.message);
     return null;
   }
 }
@@ -83,6 +85,7 @@ export async function getInspections(limit = 20) {
   try {
     return await apiGet(`/api/inspections?limit=${limit}`);
   } catch (error) {
+    console.error('getInspections error:', error.message);
     return {
       count: 0,
       inspections: [],
@@ -116,9 +119,25 @@ export async function getAnalytics(period = 'today') {
   }
 }
 
-export async function getDefectDistribution() {
+export async function getAnalyticsSummary() {
   try {
-    return await apiGet('/api/analytics/defect-distribution');
+    return await apiGet('/api/analytics/summary');
+  } catch (error) {
+    console.error('getAnalyticsSummary error:', error.message);
+    return {
+      total_inspections: 0,
+      good_count: 0,
+      bad_count: 0,
+      pass_rate: 0,
+      defect_rate: 0,
+      avg_defects_per_hide: 0,
+    };
+  }
+}
+
+export async function getDefectDistribution(period = 'today') {
+  try {
+    return await apiGet(`/api/analytics/defects?period=${period}`);
   } catch (error) {
     console.error('getDefectDistribution error:', error.message);
     return {
@@ -139,28 +158,33 @@ export async function getTimeline(period = 'today') {
 }
 
 export async function resetHistory(deleteCaptures = false) {
-  const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
-    body: JSON.stringify({
-      delete_captures: deleteCaptures,
-    }),
-  });
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      },
+      body: JSON.stringify({
+        delete_captures: deleteCaptures,
+      }),
+    });
 
-  const data = await safeJson(response);
+    const data = await safeJson(response);
 
-  if (!response.ok) {
-    const message =
-      data?.error ||
-      data?.message ||
-      `Request failed with status ${response.status}`;
-    throw new Error(message);
+    if (!response.ok) {
+      const message =
+        data?.error ||
+        data?.message ||
+        `Request failed with status ${response.status}`;
+      throw new Error(message);
+    }
+
+    return data;
+  } catch (error) {
+    console.error('resetHistory error:', error.message);
+    throw error;
   }
-
-  return data;
 }
 
 export function connectWebSocket(handlers = {}) {
@@ -224,6 +248,7 @@ export default {
   getInspections,
   getStreamStatus,
   getAnalytics,
+  getAnalyticsSummary,
   getDefectDistribution,
   getTimeline,
   resetHistory,

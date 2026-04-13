@@ -110,7 +110,7 @@ export default function AnalyticsScreen() {
     try {
       const [a, d, t] = await Promise.all([
         getAnalytics(period),
-        getDefectDistribution(),
+        getDefectDistribution(period),
         getTimeline(period),
       ]);
 
