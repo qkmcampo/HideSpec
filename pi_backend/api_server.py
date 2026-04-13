@@ -41,6 +41,21 @@ def init_db():
         )
     """)
 
+    # Optional helper table for compatibility with db_manager.py.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS defect_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            inspection_id INTEGER NOT NULL,
+            defect_type TEXT NOT NULL,
+            confidence REAL,
+            bbox_x INTEGER,
+            bbox_y INTEGER,
+            bbox_w INTEGER,
+            bbox_h INTEGER,
+            FOREIGN KEY (inspection_id) REFERENCES inspections(id)
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -62,13 +77,13 @@ def get_session_summary():
     cur = conn.cursor()
 
     cur.execute("SELECT COUNT(*) AS total FROM inspections")
-    total_inspected = cur.fetchone()["total"]
+    total_inspected = cur.fetchone()["total"] or 0
 
     cur.execute("SELECT COUNT(*) AS good_count FROM inspections WHERE classification = 'Good'")
-    good_count = cur.fetchone()["good_count"]
+    good_count = cur.fetchone()["good_count"] or 0
 
     cur.execute("SELECT COUNT(*) AS bad_count FROM inspections WHERE classification = 'Bad'")
-    bad_count = cur.fetchone()["bad_count"]
+    bad_count = cur.fetchone()["bad_count"] or 0
 
     conn.close()
 
@@ -209,7 +224,7 @@ def get_timeline_data(period="today"):
     if period == "today":
         group_fmt = "%H:00"
     elif period in ("week", "month"):
-        group_fmt = "%Y-%m-%d"
+        group_fmt = "%m/%d"
     else:
         group_fmt = "%Y-%m"
 
@@ -217,6 +232,7 @@ def get_timeline_data(period="today"):
         cur.execute(f"""
             SELECT
                 strftime('{group_fmt}', created_at) AS time_label,
+                COUNT(*) AS total,
                 SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
                 SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
             FROM inspections
@@ -227,6 +243,7 @@ def get_timeline_data(period="today"):
         cur.execute(f"""
             SELECT
                 strftime('{group_fmt}', created_at) AS time_label,
+                COUNT(*) AS total,
                 SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
                 SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
             FROM inspections
@@ -243,12 +260,26 @@ def get_timeline_data(period="today"):
         "timeline": [
             {
                 "time_label": row["time_label"] or "",
+                "total": row["total"] or 0,
                 "good": row["good"] or 0,
                 "bad": row["bad"] or 0,
             }
             for row in rows
         ]
     }
+
+
+def emit_realtime_updates():
+    conn = get_db_connection()
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT 1")
+    row = cur.fetchone()
+    conn.close()
+
+    if row is not None:
+        socketio.emit("new_inspection", row_to_inspection(row))
+
+    socketio.emit("status_update", get_session_summary())
 
 
 def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=None):
@@ -281,6 +312,29 @@ def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=No
     ))
 
     inspection_id = cur.lastrowid
+
+    for defect in defects:
+        cur.execute("""
+            INSERT INTO defect_log (
+                inspection_id,
+                defect_type,
+                confidence,
+                bbox_x,
+                bbox_y,
+                bbox_w,
+                bbox_h
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+        """, (
+            inspection_id,
+            defect.get("type", "unknown"),
+            defect.get("confidence", 0),
+            defect.get("x", 0),
+            defect.get("y", 0),
+            defect.get("w", 0),
+            defect.get("h", 0),
+        ))
+
     conn.commit()
 
     cur.execute("SELECT * FROM inspections WHERE id = ?", (inspection_id,))
@@ -298,6 +352,7 @@ def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=No
 def reset_history(delete_captures=False):
     conn = get_db_connection()
     cur = conn.cursor()
+    cur.execute("DELETE FROM defect_log")
     cur.execute("DELETE FROM inspections")
     conn.commit()
     conn.close()
@@ -336,6 +391,16 @@ def api_status():
         "analytics": {
             "defects_by_type": get_defect_type_summary()
         }
+    })
+
+
+@app.route("/api/stream/status", methods=["GET"])
+def stream_status():
+    return jsonify({
+        "status": "running",
+        "streaming": True,
+        "camera_connected": True,
+        "source": "raspberry-pi-5"
     })
 
 
@@ -412,6 +477,7 @@ def create_inspection():
     hide_id = data.get("hide_id")
     defects = data.get("defects", [])
     snapshot_path = data.get("snapshot_path")
+    created_at = data.get("created_at")
 
     if not hide_id:
         return jsonify({"error": "hide_id is required"}), 400
@@ -422,10 +488,17 @@ def create_inspection():
     inspection = create_inspection_record(
         hide_id=hide_id,
         defects=defects,
-        snapshot_path=snapshot_path
+        snapshot_path=snapshot_path,
+        created_at=created_at,
     )
 
     return jsonify(inspection), 201
+
+
+@app.route("/api/trigger-update", methods=["POST"])
+def trigger_update():
+    emit_realtime_updates()
+    return jsonify({"status": "ok"})
 
 
 @app.route("/api/history/reset", methods=["POST"])
@@ -467,12 +540,14 @@ def home():
         <h1>HideSpec API Server</h1>
 
         <p><a href="/api/status" style="color:#4da3ff;">/api/status</a></p>
+        <p><a href="/api/stream/status" style="color:#4da3ff;">/api/stream/status</a></p>
         <p><a href="/api/inspections/latest" style="color:#4da3ff;">/api/inspections/latest</a></p>
         <p><a href="/api/inspections" style="color:#4da3ff;">/api/inspections</a></p>
         <p><a href="/api/analytics/summary" style="color:#4da3ff;">/api/analytics/summary</a></p>
         <p><a href="/api/analytics?period=today" style="color:#4da3ff;">/api/analytics?period=today</a></p>
         <p><a href="/api/analytics/defects?period=today" style="color:#4da3ff;">/api/analytics/defects?period=today</a></p>
         <p><a href="/api/analytics/timeline?period=today" style="color:#4da3ff;">/api/analytics/timeline?period=today</a></p>
+        <p><a href="/api/trigger-update" style="color:#4da3ff;">/api/trigger-update</a></p>
 
         <div style="margin-top:30px;">
           <button
@@ -525,12 +600,14 @@ if __name__ == "__main__":
 
     print(f"Database: {DB_PATH}")
     print("API status: http://0.0.0.0:5000/api/status")
+    print("Stream status: http://0.0.0.0:5000/api/stream/status")
     print("Latest inspection: http://0.0.0.0:5000/api/inspections/latest")
     print("Inspection history: http://0.0.0.0:5000/api/inspections")
     print("Analytics summary: http://0.0.0.0:5000/api/analytics/summary")
     print("Analytics overview: http://0.0.0.0:5000/api/analytics?period=today")
     print("Analytics defects: http://0.0.0.0:5000/api/analytics/defects?period=today")
     print("Analytics timeline: http://0.0.0.0:5000/api/analytics/timeline?period=today")
+    print("Trigger update: http://0.0.0.0:5000/api/trigger-update")
     print("Reset history: http://0.0.0.0:5000/api/history/reset")
 
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
