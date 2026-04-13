@@ -1,7 +1,7 @@
 """
 Leather Hide Inspection — Database Manager
-Handles SQLite storage of inspection records.
-Aligned with api_server.py for live analytics + mobile app.
+Aligned with api_server.py and camera_stream.py
+Uses hidespec.db for live analytics + mobile app integration.
 """
 
 import sqlite3
@@ -9,7 +9,6 @@ import json
 import os
 from datetime import datetime, timedelta
 
-# Match api_server.py database file
 DB_PATH = os.path.join(os.path.dirname(__file__), "hidespec.db")
 
 
@@ -24,7 +23,7 @@ class InspectionDB:
         return conn
 
     def _init_db(self):
-        """Create tables if they don't exist."""
+        """Create tables if they do not exist."""
         conn = self._get_conn()
 
         conn.execute("""
@@ -71,13 +70,12 @@ class InspectionDB:
         Args:
             hide_id (str): Unique identifier for the leather hide
             classification (str): 'Good' or 'Bad'
-            defects (list): List of dicts with keys: type, confidence, x, y, w, h
+            defects (list): List of dicts with keys like type, confidence, x, y, w, h
             total_defects (int): Total number of defects found
-            image_path (str): Path to the saved inspection image
-            created_at (str): ISO timestamp
-
+            image_path (str): Saved image path, stored as snapshot_path
+            created_at (str): ISO timestamp string
         Returns:
-            int: The inspection ID
+            int: Inserted inspection ID
         """
         if created_at is None:
             created_at = datetime.utcnow().isoformat()
@@ -137,7 +135,7 @@ class InspectionDB:
         return inspection_id
 
     def get_inspection(self, inspection_id):
-        """Get a single inspection by ID."""
+        """Get one inspection by ID."""
         conn = self._get_conn()
         row = conn.execute(
             "SELECT * FROM inspections WHERE id = ?",
@@ -150,7 +148,7 @@ class InspectionDB:
         return None
 
     def get_inspections(self, limit=50, offset=0, classification=None):
-        """Get inspection history with optional filtering."""
+        """Get inspection history with optional filter."""
         conn = self._get_conn()
         query = "SELECT * FROM inspections"
         params = []
@@ -167,18 +165,19 @@ class InspectionDB:
         return [self._row_to_dict(r) for r in rows]
 
     def get_analytics(self, period="today"):
-        """Get aggregated analytics for a time period."""
+        """Get aggregate analytics for a time period."""
         conn = self._get_conn()
         where_clause, params = self._period_filter(period)
 
         row = conn.execute(
             f"""
             SELECT
-                COUNT(*) as total,
-                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) as good,
-                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) as bad,
-                AVG(total_defects) as avg_defects
-            FROM inspections {where_clause}
+                COUNT(*) AS total,
+                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad,
+                AVG(total_defects) AS avg_defects
+            FROM inspections
+            {where_clause}
             """,
             params,
         ).fetchone()
@@ -186,6 +185,7 @@ class InspectionDB:
         total = row["total"] or 0
         good = row["good"] or 0
         bad = row["bad"] or 0
+        avg = round(row["avg_defects"] or 0, 2)
 
         conn.close()
 
@@ -195,52 +195,61 @@ class InspectionDB:
             "bad_count": bad,
             "pass_rate": round((good / total) * 100, 1) if total > 0 else 0,
             "defect_rate": round((bad / total) * 100, 1) if total > 0 else 0,
-            "avg_defects_per_hide": round(row["avg_defects"] or 0, 2),
+            "avg_defects_per_hide": avg,
             "period": period,
         }
 
-    def get_defect_distribution(self, period="all"):
+    def get_defect_distribution(self, period="today"):
         """Get count of each defect type."""
         conn = self._get_conn()
-        where_clause = ""
-        params = []
 
-        if period != "all":
-            time_filter = self._get_time_boundary(period)
-            where_clause = "WHERE i.created_at >= ?"
-            params = [time_filter]
+        if period == "all":
+            rows = conn.execute(
+                """
+                SELECT d.defect_type, COUNT(*) AS count
+                FROM defect_log d
+                JOIN inspections i ON d.inspection_id = i.id
+                GROUP BY d.defect_type
+                ORDER BY count DESC
+                """
+            ).fetchall()
+        else:
+            time_boundary = self._get_time_boundary(period)
+            rows = conn.execute(
+                """
+                SELECT d.defect_type, COUNT(*) AS count
+                FROM defect_log d
+                JOIN inspections i ON d.inspection_id = i.id
+                WHERE datetime(i.created_at) >= datetime(?)
+                GROUP BY d.defect_type
+                ORDER BY count DESC
+                """,
+                (time_boundary,),
+            ).fetchall()
 
-        rows = conn.execute(
-            f"""
-            SELECT d.defect_type, COUNT(*) as count
-            FROM defect_log d
-            JOIN inspections i ON d.inspection_id = i.id
-            {where_clause}
-            GROUP BY d.defect_type
-            ORDER BY count DESC
-            """,
-            params,
-        ).fetchall()
         conn.close()
 
         return [{"type": r["defect_type"], "count": r["count"]} for r in rows]
 
     def get_timeline(self, period="today"):
-        """Get inspection counts over time for charts."""
+        """Get inspection timeline data for charts."""
         conn = self._get_conn()
 
         if period == "today":
             time_boundary = datetime.now().replace(
                 hour=0, minute=0, second=0, microsecond=0
             ).isoformat()
+            label_fmt = "%H:00"
+
             rows = conn.execute(
-                """
-                SELECT strftime('%H:00', created_at) as time_label,
-                       COUNT(*) as total,
-                       SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) as good,
-                       SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) as bad
+                f"""
+                SELECT
+                    strftime('{label_fmt}', created_at) AS time_label,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                    SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
                 FROM inspections
-                WHERE created_at >= ?
+                WHERE datetime(created_at) >= datetime(?)
                 GROUP BY time_label
                 ORDER BY time_label
                 """,
@@ -249,14 +258,17 @@ class InspectionDB:
 
         elif period == "week":
             time_boundary = (datetime.now() - timedelta(days=7)).isoformat()
+            label_fmt = "%m/%d"
+
             rows = conn.execute(
-                """
-                SELECT strftime('%m/%d', created_at) as time_label,
-                       COUNT(*) as total,
-                       SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) as good,
-                       SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) as bad
+                f"""
+                SELECT
+                    strftime('{label_fmt}', created_at) AS time_label,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                    SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
                 FROM inspections
-                WHERE created_at >= ?
+                WHERE datetime(created_at) >= datetime(?)
                 GROUP BY time_label
                 ORDER BY time_label
                 """,
@@ -265,27 +277,31 @@ class InspectionDB:
 
         elif period == "month":
             time_boundary = (datetime.now() - timedelta(days=30)).isoformat()
+            label_fmt = "%m/%d"
+
             rows = conn.execute(
-                """
-                SELECT strftime('%m/%d', created_at) as time_label,
-                       COUNT(*) as total,
-                       SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) as good,
-                       SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) as bad
+                f"""
+                SELECT
+                    strftime('{label_fmt}', created_at) AS time_label,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                    SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
                 FROM inspections
-                WHERE created_at >= ?
+                WHERE datetime(created_at) >= datetime(?)
                 GROUP BY time_label
                 ORDER BY time_label
                 """,
                 (time_boundary,),
             ).fetchall()
 
-        else:
+        else:  # all
             rows = conn.execute(
                 """
-                SELECT strftime('%Y-%m', created_at) as time_label,
-                       COUNT(*) as total,
-                       SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) as good,
-                       SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) as bad
+                SELECT
+                    strftime('%Y-%m', created_at) AS time_label,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
+                    SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
                 FROM inspections
                 GROUP BY time_label
                 ORDER BY time_label
@@ -294,6 +310,14 @@ class InspectionDB:
 
         conn.close()
         return [dict(r) for r in rows]
+
+    def clear_all(self):
+        """Delete all inspections and defect logs."""
+        conn = self._get_conn()
+        conn.execute("DELETE FROM defect_log")
+        conn.execute("DELETE FROM inspections")
+        conn.commit()
+        conn.close()
 
     def _row_to_dict(self, row):
         data = dict(row)
@@ -306,14 +330,16 @@ class InspectionDB:
         if period == "all":
             return "", []
         time_boundary = self._get_time_boundary(period)
-        return "WHERE created_at >= ?", [time_boundary]
+        return "WHERE datetime(created_at) >= datetime(?)", [time_boundary]
 
     def _get_time_boundary(self, period):
         now = datetime.now()
+
         if period == "today":
             return now.replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         if period == "week":
             return (now - timedelta(days=7)).isoformat()
         if period == "month":
             return (now - timedelta(days=30)).isoformat()
+
         return "2000-01-01T00:00:00"
