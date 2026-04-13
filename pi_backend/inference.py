@@ -1,10 +1,11 @@
 """
-Leather Hide Inspection — Inference Pipeline (FIXED FOR ANALYTICS)
+Leather Hide Inspection — FINAL Inference Pipeline
 
-✔ Saves data correctly for analytics
-✔ Uses Picamera2 (Pi 5 compatible)
-✔ Writes ISO timestamps
-✔ Ensures defects JSON is valid
+✔ Auto-detection (no manual input)
+✔ Saves directly to DB (hidespec.db)
+✔ Compatible with analytics API
+✔ Works with Picamera2 (Pi 5)
+✔ Ready for real-time dashboard
 """
 
 from ultralytics import YOLO
@@ -14,9 +15,10 @@ import time
 import os
 from datetime import datetime
 
-# ─── Configuration ────────────────────────────────────────────
+# ─── CONFIG ────────────────────────────────────────────────
 MODEL_PATH = "best.pt"
 CONFIDENCE_THRESHOLD = 0.5
+CAPTURE_INTERVAL = 5  # seconds
 IMAGE_SAVE_DIR = "captures"
 
 MAX_DEFECTS_FOR_GOOD = 1
@@ -28,20 +30,17 @@ CLASS_NAMES = {
     2: "hole",
 }
 
-# ─── Initialize ───────────────────────────────────────────────
-print("Loading YOLOv8 model...")
+# ─── INIT ─────────────────────────────────────────────────
+print("Loading YOLO model...")
 model = YOLO(MODEL_PATH)
-print(f"Model loaded: {MODEL_PATH}")
 
 db = InspectionDB()
-print("Database connected.")
-
 os.makedirs(IMAGE_SAVE_DIR, exist_ok=True)
 
 hide_counter = 0
 
 
-# ─── Camera Setup ─────────────────────────────────────────────
+# ─── CAMERA SETUP ─────────────────────────────────────────
 def setup_camera():
     try:
         from picamera2 import Picamera2
@@ -52,44 +51,36 @@ def setup_camera():
         cam.configure(config)
         cam.start()
         time.sleep(1)
-        print("Camera: Picamera2 initialized")
+        print("Camera initialized (Picamera2)")
         return cam, True
-    except:
-        print("Picamera2 failed → using OpenCV fallback")
+    except Exception as e:
+        print(f"Picamera2 failed → {e}")
 
     cap = cv2.VideoCapture(0)
     if cap.isOpened():
+        print("Camera initialized (OpenCV)")
         return cap, False
 
     return None, False
 
 
-def capture_image(camera, is_picamera2):
-    if camera is None:
-        return None
-
-    if is_picamera2:
-        try:
-            frame = camera.capture_array()
-            return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
-        except:
-            return None
+def capture_image(camera, is_picam):
+    if is_picam:
+        frame = camera.capture_array()
+        return cv2.cvtColor(frame, cv2.COLOR_RGB2BGR)
     else:
         ret, frame = camera.read()
         return frame if ret else None
 
 
-def release_camera(camera, is_picamera2):
-    if camera is None:
-        return
-    if is_picamera2:
+def release_camera(camera, is_picam):
+    if is_picam:
         camera.stop()
     else:
         camera.release()
 
 
-# ─── Core Logic ───────────────────────────────────────────────
-
+# ─── CORE LOGIC ───────────────────────────────────────────
 def classify_hide(defects):
     if len(defects) > MAX_DEFECTS_FOR_GOOD:
         return "Bad"
@@ -109,12 +100,12 @@ def run_inference(image):
         if result.boxes is not None:
             for box in result.boxes:
                 cls_id = int(box.cls[0])
-                confidence = float(box.conf[0])
+                conf = float(box.conf[0])
                 x1, y1, x2, y2 = box.xyxy[0].tolist()
 
                 defects.append({
                     "type": CLASS_NAMES.get(cls_id, "unknown"),
-                    "confidence": round(confidence, 2),
+                    "confidence": round(conf, 2),
                     "x": int(x1),
                     "y": int(y1),
                     "w": int(x2 - x1),
@@ -124,31 +115,23 @@ def run_inference(image):
     return defects
 
 
-# ─── 🔥 FIXED PART (IMPORTANT) ───────────────────────────────
-
+# ─── 🔥 CRITICAL: DB SAVE ─────────────────────────────────
 def process_hide(image, hide_id):
-    """
-    This is the MOST IMPORTANT function for analytics.
-    """
-
     defects = run_inference(image)
     classification = classify_hide(defects)
 
-    # Save image
     image_path = os.path.join(IMAGE_SAVE_DIR, f"{hide_id}.jpg")
     cv2.imwrite(image_path, image)
 
-    # 🔥 FIX: Proper DB save (MATCHES api_server.py)
+    # 🔥 MUST MATCH db_manager.py
     inspection_id = db.save_inspection(
         hide_id=hide_id,
         classification=classification,
         defects=defects,
         total_defects=len(defects),
         image_path=image_path,
-        created_at=datetime.utcnow().isoformat()  # ✅ REQUIRED
+        created_at=datetime.utcnow().isoformat()
     )
-
-    inspection = db.get_inspection(inspection_id)
 
     print(
         f"[INSPECT] {hide_id} → {classification} "
@@ -156,48 +139,42 @@ def process_hide(image, hide_id):
         f"{', '.join(d['type'] for d in defects) if defects else 'none'})"
     )
 
-    return inspection
 
-
-# ─── Main Loop ────────────────────────────────────────────────
-
-def run_with_camera():
+# ─── AUTO DETECTION LOOP ─────────────────────────────────
+def run_auto_detection():
     global hide_counter
 
-    camera, is_picam2 = setup_camera()
+    camera, is_picam = setup_camera()
     if camera is None:
-        print("ERROR: No camera")
+        print("No camera detected")
         return
 
-    print("\n=== LIVE INSPECTION MODE ===")
-    print("Press ENTER to inspect | q to quit\n")
+    print("\n=== AUTO DETECTION STARTED ===")
+    print(f"Capturing every {CAPTURE_INTERVAL} seconds...\n")
 
     try:
         while True:
-            user_input = input(">> Inspect next hide: ")
-            if user_input.lower() == 'q':
-                break
-
             hide_counter += 1
             hide_id = f"HIDE-{hide_counter:04d}"
 
-            frame = capture_image(camera, is_picam2)
+            frame = capture_image(camera, is_picam)
             if frame is None:
                 print("Capture failed")
+                time.sleep(1)
                 continue
 
             process_hide(frame, hide_id)
 
+            time.sleep(CAPTURE_INTERVAL)
+
     except KeyboardInterrupt:
-        print("Stopping...")
+        print("\nStopping...")
 
     finally:
-        release_camera(camera, is_picam2)
-        print("Camera released")
+        release_camera(camera, is_picam)
 
 
-# ─── Entry Point ──────────────────────────────────────────────
-
+# ─── ENTRY ───────────────────────────────────────────────
 if __name__ == "__main__":
-    print("\n=== HideSpec Inference ===")
-    run_with_camera()
+    print("\n=== HideSpec Live Detection ===")
+    run_auto_detection()
