@@ -10,6 +10,7 @@ import {
   ActivityIndicator,
   Animated,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { BarChart, PieChart } from 'react-native-chart-kit';
 import StatCard from '../components/StatCard';
 import {
@@ -112,8 +113,12 @@ export default function AnalyticsScreen() {
   const gaugeWidth = useRef(new Animated.Value(0)).current;
   const periodScale = useRef(new Animated.Value(1)).current;
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (showLoader = false) => {
     try {
+      if (showLoader) {
+        setLoading(true);
+      }
+
       const [a, d, t] = await Promise.all([
         getAnalytics(period),
         getDefectDistribution(period),
@@ -127,12 +132,17 @@ export default function AnalyticsScreen() {
           friction: 6,
           useNativeDriver: false,
         }).start();
+      } else {
+        setAnalytics(null);
       }
 
       setDefectDist(d?.defects || []);
       setTimeline(t?.timeline || []);
     } catch (err) {
       console.error('AnalyticsScreen loadData error:', err);
+      setAnalytics(null);
+      setDefectDist([]);
+      setTimeline([]);
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -140,17 +150,22 @@ export default function AnalyticsScreen() {
   }, [period, gaugeWidth]);
 
   useEffect(() => {
-    setLoading(true);
-    loadData();
+    loadData(true);
   }, [period, loadData]);
 
+  useFocusEffect(
+    useCallback(() => {
+      loadData(false);
+    }, [loadData])
+  );
+
   useEffect(() => {
-    const socket = connectWebSocket({
+    connectWebSocket({
       onNewInspection: () => {
-        loadData();
+        loadData(false);
       },
       onStatusUpdate: () => {
-        loadData();
+        loadData(false);
       },
     });
 
@@ -230,7 +245,7 @@ export default function AnalyticsScreen() {
           refreshing={refreshing}
           onRefresh={() => {
             setRefreshing(true);
-            loadData();
+            loadData(false);
           }}
           tintColor={C.accent}
           colors={[C.accent]}
@@ -272,14 +287,46 @@ export default function AnalyticsScreen() {
             </View>
 
             <View style={styles.statsRow}>
-              <StatCard label="Inspected" value={analytics.total_inspections} icon="◈" color={C.blue} theme={C} />
-              <StatCard label="Passed" value={analytics.good_count} icon="▲" color={C.good} theme={C} />
-              <StatCard label="Failed" value={analytics.bad_count} icon="▼" color={C.bad} theme={C} />
+              <StatCard
+                label="Inspected"
+                value={analytics.total_inspections}
+                icon="◈"
+                color={C.blue}
+                theme={C}
+              />
+              <StatCard
+                label="Passed"
+                value={analytics.good_count}
+                icon="▲"
+                color={C.good}
+                theme={C}
+              />
+              <StatCard
+                label="Failed"
+                value={analytics.bad_count}
+                icon="▼"
+                color={C.bad}
+                theme={C}
+              />
             </View>
 
             <View style={styles.statsRow}>
-              <StatCard label="Pass Rate" value={analytics.pass_rate} unit="%" icon="◆" color={C.good} theme={C} />
-              <StatCard label="Fail Rate" value={analytics.defect_rate} unit="%" icon="◆" color={C.bad} theme={C} />
+              <StatCard
+                label="Pass Rate"
+                value={analytics.pass_rate}
+                unit="%"
+                icon="◆"
+                color={C.good}
+                theme={C}
+              />
+              <StatCard
+                label="Fail Rate"
+                value={analytics.defect_rate}
+                unit="%"
+                icon="◆"
+                color={C.bad}
+                theme={C}
+              />
               <StatCard
                 label="Avg Defects"
                 value={analytics.avg_defects_per_hide}
@@ -346,7 +393,10 @@ export default function AnalyticsScreen() {
                   color: (opacity = 1) => `rgba(88,166,255,${opacity})`,
                   labelColor: () => C.muted,
                   barPercentage: 0.4,
-                  propsForBackgroundLines: { strokeDasharray: '3 6', stroke: C.border },
+                  propsForBackgroundLines: {
+                    strokeDasharray: '3 6',
+                    stroke: C.border,
+                  },
                 }}
                 style={{ borderRadius: 10 }}
               />
@@ -398,14 +448,28 @@ export default function AnalyticsScreen() {
                 const color = DEFECT_COLORS[i % DEFECT_COLORS.length];
 
                 return (
-                  <FadeSlideIn key={`defect-row-${i}-${d.type}`} delay={600 + i * 80} direction="right">
+                  <FadeSlideIn
+                    key={`defect-row-${i}-${d.type}`}
+                    delay={600 + i * 80}
+                    direction="right"
+                  >
                     <View style={styles.tableRow}>
-                      <View style={[styles.td, { flex: 2, flexDirection: 'row', alignItems: 'center' }]}>
+                      <View
+                        style={[
+                          styles.td,
+                          { flex: 2, flexDirection: 'row', alignItems: 'center' },
+                        ]}
+                      >
                         <View style={[styles.tdDot, { backgroundColor: color }]} />
                         <Text style={styles.tdText}>{(d.type || '?').replace(/_/g, ' ')}</Text>
                       </View>
 
-                      <Text style={[styles.tdText, { flex: 1, textAlign: 'center', fontWeight: '800', color }]}>
+                      <Text
+                        style={[
+                          styles.tdText,
+                          { flex: 1, textAlign: 'center', fontWeight: '800', color },
+                        ]}
+                      >
                         {d.count}
                       </Text>
 
@@ -431,8 +495,19 @@ export default function AnalyticsScreen() {
 const getStyles = (C) =>
   StyleSheet.create({
     container: { flex: 1, backgroundColor: C.bg },
-    center: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: C.bg },
-    loadingText: { marginTop: 16, fontSize: 11, color: C.accent, fontWeight: '800', letterSpacing: 2 },
+    center: {
+      flex: 1,
+      justifyContent: 'center',
+      alignItems: 'center',
+      backgroundColor: C.bg,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 11,
+      color: C.accent,
+      fontWeight: '800',
+      letterSpacing: 2,
+    },
 
     periodBar: {
       flexDirection: 'row',
@@ -451,15 +526,44 @@ const getStyles = (C) =>
       borderWidth: 1,
       borderColor: C.border,
     },
-    periodActive: { backgroundColor: C.accent, borderColor: C.accent },
-    periodText: { fontSize: 11, fontWeight: '800', color: C.muted, letterSpacing: 1 },
-    periodTextActive: { color: C.white },
+    periodActive: {
+      backgroundColor: C.accent,
+      borderColor: C.accent,
+    },
+    periodText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: C.muted,
+      letterSpacing: 1,
+    },
+    periodTextActive: {
+      color: C.white,
+    },
 
-    section: { paddingHorizontal: 16, marginTop: 20 },
-    sectionHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
-    sectionDot: { color: C.accent, fontSize: 8, marginRight: 8 },
-    sectionTitle: { fontSize: 11, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
-    statsRow: { flexDirection: 'row', marginBottom: 8 },
+    section: {
+      paddingHorizontal: 16,
+      marginTop: 20,
+    },
+    sectionHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginBottom: 12,
+    },
+    sectionDot: {
+      color: C.accent,
+      fontSize: 8,
+      marginRight: 8,
+    },
+    sectionTitle: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: C.dim,
+      letterSpacing: 1.5,
+    },
+    statsRow: {
+      flexDirection: 'row',
+      marginBottom: 8,
+    },
 
     gaugeCard: {
       backgroundColor: C.card,
@@ -474,13 +578,43 @@ const getStyles = (C) =>
       alignItems: 'center',
       marginBottom: 12,
     },
-    gaugeTitle: { fontSize: 10, fontWeight: '800', color: C.dim, letterSpacing: 1.5 },
-    gaugeBarBg: { height: 10, borderRadius: 5, overflow: 'hidden', backgroundColor: C.bad },
-    gaugeBarGood: { height: 10, backgroundColor: C.good, borderRadius: 5 },
-    gaugeLegend: { flexDirection: 'row', justifyContent: 'center', marginTop: 10, gap: 20 },
-    gaugeLegendItem: { flexDirection: 'row', alignItems: 'center' },
-    gaugeLegendDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-    gaugeLegendText: { fontSize: 11, color: C.dim },
+    gaugeTitle: {
+      fontSize: 10,
+      fontWeight: '800',
+      color: C.dim,
+      letterSpacing: 1.5,
+    },
+    gaugeBarBg: {
+      height: 10,
+      borderRadius: 5,
+      overflow: 'hidden',
+      backgroundColor: C.bad,
+    },
+    gaugeBarGood: {
+      height: 10,
+      backgroundColor: C.good,
+      borderRadius: 5,
+    },
+    gaugeLegend: {
+      flexDirection: 'row',
+      justifyContent: 'center',
+      marginTop: 10,
+      gap: 20,
+    },
+    gaugeLegendItem: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+    gaugeLegendDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: 6,
+    },
+    gaugeLegendText: {
+      fontSize: 11,
+      color: C.dim,
+    },
 
     chartCard: {
       backgroundColor: C.card,
@@ -506,7 +640,12 @@ const getStyles = (C) =>
       borderBottomColor: C.border,
       backgroundColor: C.subtle2,
     },
-    thText: { fontSize: 9, fontWeight: '800', color: C.muted, letterSpacing: 1.5 },
+    thText: {
+      fontSize: 9,
+      fontWeight: '800',
+      color: C.muted,
+      letterSpacing: 1.5,
+    },
     tableRow: {
       flexDirection: 'row',
       paddingVertical: 12,
@@ -516,13 +655,26 @@ const getStyles = (C) =>
       alignItems: 'center',
     },
     td: {},
-    tdDot: { width: 8, height: 8, borderRadius: 4, marginRight: 10 },
-    tdText: { fontSize: 13, color: C.text },
+    tdDot: {
+      width: 8,
+      height: 8,
+      borderRadius: 4,
+      marginRight: 10,
+    },
+    tdText: {
+      fontSize: 13,
+      color: C.text,
+    },
     shareBadge: {
       backgroundColor: C.subtle,
       borderRadius: 4,
       paddingHorizontal: 8,
       paddingVertical: 2,
     },
-    shareText: { fontSize: 11, color: C.dim, fontWeight: '600', fontFamily: 'monospace' },
+    shareText: {
+      fontSize: 11,
+      color: C.dim,
+      fontWeight: '600',
+      fontFamily: 'monospace',
+    },
   });

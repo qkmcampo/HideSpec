@@ -1,15 +1,15 @@
 {
   "expo": {
-    "name": "Leather-Inspection-App",
+    "name": "HideSpec",
     "slug": "Leather-Inspection-App",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/icon.png",
+    "icon": "./assets/hidespec-logo.png",
     "userInterfaceStyle": "light",
     "splash": {
-      "image": "./assets/splash-icon.png",
+      "image": "./assets/hidespec-logo.png",
       "resizeMode": "contain",
-      "backgroundColor": "#ffffff"
+      "backgroundColor": "#000000"
     },
     "ios": {
       "supportsTablet": true,
@@ -19,16 +19,15 @@
       }
     },
     "android": {
+      "usesCleartextTraffic": true,
       "adaptiveIcon": {
-        "backgroundColor": "#E6F4FE",
-        "foregroundImage": "./assets/android-icon-foreground.png",
-        "backgroundImage": "./assets/android-icon-background.png",
-        "monochromeImage": "./assets/android-icon-monochrome.png"
+        "foregroundImage": "./assets/hidespec-logo.png",
+        "backgroundColor": "#000000"
       },
       "package": "com.team10.LeatherInspectionApp"
     },
     "web": {
-      "favicon": "./assets/favicon.png"
+      "favicon": "./assets/hidespec-logo.png"
     },
     "extra": {
       "eas": {
