@@ -76,6 +76,16 @@ export async function getLatestInspection() {
   try {
     return await apiGet('/api/inspections/latest');
   } catch (error) {
+    const msg = String(error.message || '').toLowerCase();
+
+    if (
+      msg.includes('no inspection has been recorded yet') ||
+      msg.includes('not found') ||
+      msg.includes('404')
+    ) {
+      return null;
+    }
+
     console.error('getLatestInspection error:', error.message);
     return null;
   }
