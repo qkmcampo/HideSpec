@@ -99,6 +99,45 @@ export async function getStreamStatus() {
   }
 }
 
+export async function getAnalytics(period = 'today') {
+  try {
+    return await apiGet(`/api/analytics?period=${period}`);
+  } catch (error) {
+    console.error('getAnalytics error:', error.message);
+    return {
+      total_inspections: 0,
+      good_count: 0,
+      bad_count: 0,
+      pass_rate: 0,
+      defect_rate: 0,
+      avg_defects_per_hide: 0,
+      period,
+    };
+  }
+}
+
+export async function getDefectDistribution() {
+  try {
+    return await apiGet('/api/analytics/defect-distribution');
+  } catch (error) {
+    console.error('getDefectDistribution error:', error.message);
+    return {
+      defects: [],
+    };
+  }
+}
+
+export async function getTimeline(period = 'today') {
+  try {
+    return await apiGet(`/api/analytics/timeline?period=${period}`);
+  } catch (error) {
+    console.error('getTimeline error:', error.message);
+    return {
+      timeline: [],
+    };
+  }
+}
+
 export async function resetHistory(deleteCaptures = false) {
   const response = await fetch(`${API_BASE_URL}/api/history/reset`, {
     method: 'POST',
@@ -184,6 +223,9 @@ export default {
   getLatestInspection,
   getInspections,
   getStreamStatus,
+  getAnalytics,
+  getDefectDistribution,
+  getTimeline,
   resetHistory,
   connectWebSocket,
   disconnectWebSocket,
