@@ -1,4 +1,4 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
 from pathlib import Path
@@ -230,6 +230,11 @@ def api_config():
         "database": str(DB_PATH),
         "captures_dir": str(CAPTURES_DIR),
     })
+
+
+@app.route("/captures/<path:filename>", methods=["GET"])
+def captured_image(filename):
+    return send_from_directory(CAPTURES_DIR, filename)
 
 
 @app.route("/api/inspections", methods=["POST"])

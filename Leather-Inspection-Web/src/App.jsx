@@ -51,7 +51,7 @@ function Monitor({ data, refresh }) {
           <Card title="Recent Inspections">
             <div className="table compact-table">
               <table>
-                <thead><tr><th>Hide ID</th><th>Result</th><th>Defects</th><th>Recorded</th></tr></thead>
+                <thead><tr><th>Hide ID</th><th>Result</th><th>Defects</th><th>Recorded</th><th>Capture</th></tr></thead>
                 <tbody>
                   {data.history.length ? data.history.map((item) => (
                     <tr key={item.id || item.created_at}>
@@ -59,8 +59,9 @@ function Monitor({ data, refresh }) {
                       <td className={item.classification === 'Good' ? 'good' : 'bad'}>{item.classification}</td>
                       <td>{item.total_defects || 0}</td>
                       <td>{item.created_at}</td>
+                      <td>{item.snapshot_path ? <a href={`${apiBase}${item.snapshot_path}`} target="_blank" rel="noreferrer">View</a> : '—'}</td>
                     </tr>
-                  )) : <tr><td colSpan="4">No inspection history yet.</td></tr>}
+                  )) : <tr><td colSpan="5">No inspection history yet.</td></tr>}
                 </tbody>
               </table>
             </div>

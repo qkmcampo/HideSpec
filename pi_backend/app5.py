@@ -280,9 +280,17 @@ latest_stats = {
 }
 
 API_SERVER_URL = "http://127.0.0.1:5001"
+CAPTURES_DIR = os.path.join(os.path.dirname(__file__), "captures")
+os.makedirs(CAPTURES_DIR, exist_ok=True)
 
 
-def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status_text):
+def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status_text, frame):
+    capture_filename = f"{hide_id}.jpg"
+    capture_path = os.path.join(CAPTURES_DIR, capture_filename)
+    if not cv2.imwrite(capture_path, frame):
+        print(f"[CAPTURE] Failed to save {capture_path}")
+        return False
+
     payload = {
         "hide_id": hide_id,
         "defects": [
@@ -299,6 +307,7 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
         "defect_area_percent": round(float(ratio or 0), 1),
         "leather_area": int(piece_area or 0),
         "defect_area": int((piece_area or 0) * float(ratio or 0) / 100.0),
+        "snapshot_path": f"/captures/{capture_filename}",
         "machine_status": status_text,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
     }
@@ -628,10 +637,6 @@ picam2.start()
 time.sleep(2)
 
 # Background Belt Calibration
-init_frame = picam2.capture_array()
-cv_engine.calibrate_belt(init_frame)
-
-
 # =====================================================
 # Main Vision / Hardware Worker
 # =====================================================
@@ -846,6 +851,7 @@ def inspection_worker():
                     current_ratio,
                     piece_area,
                     "BELT: RUNNING",
+                    frame,
                 )
 
         # -------------------------------------------------
@@ -941,6 +947,7 @@ def inspection_worker():
                         current_ratio,
                         piece_area,
                         "BELT: PAUSED IN CENTER",
+                        frame,
                     )
 
                 print(
