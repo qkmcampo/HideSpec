@@ -782,6 +782,15 @@ def inspection_worker():
         ):
             print("[PI] Hide entered inspection area. Stopping for projection...")
 
+            # A new hide can enter the center while the previous hide is
+            # still visible to segmentation. Start a fresh database record
+            # for each center-inspection event instead of reusing the first
+            # hide's saved flag and ID.
+            if current_inspection_saved or current_hide_id is None:
+                current_hide_id = time.strftime("HIDE-%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
+                current_inspection_saved = False
+                print(f"[SAVE] New inspection started: {current_hide_id}")
+
             is_center_paused = True
             has_paused_for_current_hide = True
             projection_zone_clear_frames = 0
@@ -832,9 +841,8 @@ def inspection_worker():
             detection_updated_this_frame = True
 
             current_grade, current_ratio, current_reason = cv_engine.grade_piece(
-                [(d[0], 0) for d in last_detections],
+                [(d[0], (d[4] - d[2]) * (d[5] - d[3])) for d in last_detections],
                 piece_area,
-                manual_defect_px=total_defect_px,
             )
 
             if (
