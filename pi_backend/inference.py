@@ -25,7 +25,7 @@ MAX_DEFECTS_FOR_GOOD = 1
 BAD_IF_ANY = ["hole", "cut"]
 
 CLASS_NAMES = {
-    0: "color_defect",
+    0: "paint_stain",
     1: "fold",
     2: "hole",
 }

@@ -27,6 +27,15 @@ BAD_DEFECT_THRESHOLD = 3
 REQUIRED_CONSECUTIVE_BAD_FRAMES = 3
 MISSING_FRAMES_TO_RESET = 15
 
+DEFECT_TYPE_ALIASES = {
+    "color_defect": "paint_stain",
+}
+BAD_DEFECT_THRESHOLD_PERCENT = 20.0
+
+
+def normalize_defect_type(defect_type):
+    return DEFECT_TYPE_ALIASES.get(defect_type, defect_type)
+
 # -----------------------------
 # Arduino setup
 # -----------------------------
@@ -139,30 +148,35 @@ def merge_detections(existing, new_items):
     return merged
 
 
-def classify_hide(defects):
+def classify_hide(defects, defect_area_percent=0):
     """
-    Match your project rule:
-    Bad if 2 or more defects OR any hole/cut detected.
+    Good if defect area is 19% and below.
+    Bad if defect area is 20% and above.
     """
-    if len(defects) >= 2:
-        return "Bad"
-
-    for defect in defects:
-        if defect.get("type") in ["hole", "cut"]:
-            return "Bad"
-
-    return "Good"
+    return "Bad" if float(defect_area_percent or 0) >= BAD_DEFECT_THRESHOLD_PERCENT else "Good"
 
 
-def save_completed_inspection(hide_id, defects, snapshot_path):
-    classification = classify_hide(defects)
+def save_completed_inspection(
+    hide_id,
+    defects,
+    snapshot_path,
+    defect_area_percent=0,
+    leather_area=0,
+    defect_area=0,
+    machine_status=None,
+):
+    classification = classify_hide(defects, defect_area_percent)
 
     inspection_id = db.save_inspection(
         hide_id=hide_id,
         classification=classification,
         defects=defects,
         total_defects=len(defects),
+        defect_area_percent=defect_area_percent,
+        leather_area=leather_area,
+        defect_area=defect_area,
         image_path=snapshot_path,
+        machine_status=machine_status,
         created_at=datetime.utcnow().isoformat(),
     )
 
@@ -201,7 +215,7 @@ def generate_frames():
                 if conf >= CONF_THRESHOLD:
                     defect_count += 1
                     cls_id = int(box.cls[0].item())
-                    label = model.names.get(cls_id, str(cls_id))
+                    label = normalize_defect_type(model.names.get(cls_id, str(cls_id)))
                     x1, y1, x2, y2 = box.xyxy[0].tolist()
 
                     detections.append({
@@ -340,6 +354,7 @@ def stream_status():
                 "last_command_sent": last_command_sent,
                 "last_result": last_result,
                 "active_hide_id": active_hide_id,
+                "defect_area_percent": 0,
             },
             "detections": last_detections,
         })
@@ -388,3 +403,4 @@ if __name__ == "__main__":
 
         if arduino:
             arduino.close()
+

@@ -1,10 +1,9 @@
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO, emit
-import sqlite3
-import json
 from pathlib import Path
-from datetime import datetime, timedelta
+import os
+from db_manager import InspectionDB
 
 app = Flask(__name__)
 app.config["SECRET_KEY"] = "hidespec-secret-key"
@@ -15,348 +14,104 @@ socketio = SocketIO(app, cors_allowed_origins="*")
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "hidespec.db"
 CAPTURES_DIR = BASE_DIR / "captures"
+API_PORT = int(os.getenv("HIDESPEC_API_PORT", "5001"))
+STREAM_PORT = int(os.getenv("HIDESPEC_STREAM_PORT", "5000"))
 
 CAPTURES_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+inspection_db = InspectionDB(str(DB_PATH))
 
 
 def init_db():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS inspections (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            hide_id TEXT NOT NULL,
-            classification TEXT NOT NULL,
-            total_defects INTEGER NOT NULL DEFAULT 0,
-            defects_json TEXT NOT NULL DEFAULT '[]',
-            snapshot_path TEXT,
-            created_at TEXT NOT NULL
-        )
-    """)
-
-    # Optional helper table for compatibility with db_manager.py.
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS defect_log (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            inspection_id INTEGER NOT NULL,
-            defect_type TEXT NOT NULL,
-            confidence REAL,
-            bbox_x INTEGER,
-            bbox_y INTEGER,
-            bbox_w INTEGER,
-            bbox_h INTEGER,
-            FOREIGN KEY (inspection_id) REFERENCES inspections(id)
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
-
-def row_to_inspection(row):
-    return {
-        "id": row["id"],
-        "hide_id": row["hide_id"],
-        "classification": row["classification"],
-        "total_defects": row["total_defects"],
-        "defects": json.loads(row["defects_json"] or "[]"),
-        "snapshot_path": row["snapshot_path"],
-        "created_at": row["created_at"],
-    }
+    """Ensure the shared SQLite database schema exists."""
+    inspection_db._init_db()
 
 
 def get_session_summary():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute("SELECT COUNT(*) AS total FROM inspections")
-    total_inspected = cur.fetchone()["total"] or 0
-
-    cur.execute("SELECT COUNT(*) AS good_count FROM inspections WHERE classification = 'Good'")
-    good_count = cur.fetchone()["good_count"] or 0
-
-    cur.execute("SELECT COUNT(*) AS bad_count FROM inspections WHERE classification = 'Bad'")
-    bad_count = cur.fetchone()["bad_count"] or 0
-
-    conn.close()
-
-    defect_rate = round((bad_count / total_inspected) * 100, 2) if total_inspected > 0 else 0
-
+    analytics = inspection_db.get_analytics("all")
     return {
-        "total_inspected": total_inspected,
-        "good_count": good_count,
-        "bad_count": bad_count,
-        "defect_rate": defect_rate,
+        "total_inspected": analytics["total_inspections"],
+        "good_count": analytics["good_count"],
+        "bad_count": analytics["bad_count"],
+        "defect_rate": analytics["defect_rate"],
     }
 
 
 def get_defect_type_summary():
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute("SELECT defects_json FROM inspections ORDER BY datetime(created_at) DESC")
-    rows = cur.fetchall()
-    conn.close()
-
-    counts = {}
-    for row in rows:
-        defects = json.loads(row["defects_json"] or "[]")
-        for defect in defects:
-            defect_type = defect.get("type", "unknown")
-            counts[defect_type] = counts.get(defect_type, 0) + 1
-
-    return counts
-
-
-def get_period_start(period):
-    now = datetime.utcnow()
-
-    if period == "today":
-        return now.replace(hour=0, minute=0, second=0, microsecond=0)
-    if period == "week":
-        return now - timedelta(days=7)
-    if period == "month":
-        return now - timedelta(days=30)
-    if period == "all":
-        return None
-
-    return now.replace(hour=0, minute=0, second=0, microsecond=0)
+    return {
+        defect["type"]: defect["count"]
+        for defect in inspection_db.get_defect_distribution("all")
+    }
 
 
 def get_analytics_summary(period="today"):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    start_dt = get_period_start(period)
-
-    if start_dt is None:
-        cur.execute("""
-            SELECT
-                COUNT(*) AS total_inspections,
-                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good_count,
-                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad_count,
-                AVG(total_defects) AS avg_defects_per_hide
-            FROM inspections
-        """)
-    else:
-        cur.execute("""
-            SELECT
-                COUNT(*) AS total_inspections,
-                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good_count,
-                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad_count,
-                AVG(total_defects) AS avg_defects_per_hide
-            FROM inspections
-            WHERE datetime(created_at) >= datetime(?)
-        """, (start_dt.isoformat(),))
-
-    row = cur.fetchone()
-    conn.close()
-
-    total = row["total_inspections"] or 0
-    good = row["good_count"] or 0
-    bad = row["bad_count"] or 0
-    avg_defects = round(row["avg_defects_per_hide"] or 0, 2)
-    pass_rate = round((good / total) * 100, 2) if total > 0 else 0
-    defect_rate = round((bad / total) * 100, 2) if total > 0 else 0
-
-    return {
-        "period": period,
-        "total_inspections": total,
-        "good_count": good,
-        "bad_count": bad,
-        "pass_rate": pass_rate,
-        "defect_rate": defect_rate,
-        "avg_defects_per_hide": avg_defects,
-    }
+    return inspection_db.get_analytics(period)
 
 
 def get_defect_distribution(period="today"):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    start_dt = get_period_start(period)
-
-    if start_dt is None:
-        cur.execute("SELECT defects_json FROM inspections ORDER BY datetime(created_at) DESC")
-    else:
-        cur.execute("""
-            SELECT defects_json
-            FROM inspections
-            WHERE datetime(created_at) >= datetime(?)
-            ORDER BY datetime(created_at) DESC
-        """, (start_dt.isoformat(),))
-
-    rows = cur.fetchall()
-    conn.close()
-
-    counts = {}
-    for row in rows:
-        defects = json.loads(row["defects_json"] or "[]")
-        for defect in defects:
-            defect_type = defect.get("type", "unknown")
-            counts[defect_type] = counts.get(defect_type, 0) + 1
-
-    defects = [
-        {"type": defect_type, "count": count}
-        for defect_type, count in counts.items()
-    ]
-    defects.sort(key=lambda x: x["count"], reverse=True)
-
     return {
         "period": period,
-        "defects": defects
+        "defects": inspection_db.get_defect_distribution(period),
     }
 
 
+def get_quality_distribution(period="today"):
+    return inspection_db.get_quality_distribution(period)
+
+
+def get_defect_area_distribution(period="today"):
+    return inspection_db.get_defect_area_distribution(period)
+
+
 def get_timeline_data(period="today"):
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    start_dt = get_period_start(period)
-
-    if period == "today":
-        group_fmt = "%H:00"
-    elif period in ("week", "month"):
-        group_fmt = "%m/%d"
-    else:
-        group_fmt = "%Y-%m"
-
-    if start_dt is None:
-        cur.execute(f"""
-            SELECT
-                strftime('{group_fmt}', created_at) AS time_label,
-                COUNT(*) AS total,
-                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
-                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
-            FROM inspections
-            GROUP BY time_label
-            ORDER BY time_label ASC
-        """)
-    else:
-        cur.execute(f"""
-            SELECT
-                strftime('{group_fmt}', created_at) AS time_label,
-                COUNT(*) AS total,
-                SUM(CASE WHEN classification = 'Good' THEN 1 ELSE 0 END) AS good,
-                SUM(CASE WHEN classification = 'Bad' THEN 1 ELSE 0 END) AS bad
-            FROM inspections
-            WHERE datetime(created_at) >= datetime(?)
-            GROUP BY time_label
-            ORDER BY time_label ASC
-        """, (start_dt.isoformat(),))
-
-    rows = cur.fetchall()
-    conn.close()
-
     return {
         "period": period,
-        "timeline": [
-            {
-                "time_label": row["time_label"] or "",
-                "total": row["total"] or 0,
-                "good": row["good"] or 0,
-                "bad": row["bad"] or 0,
-            }
-            for row in rows
-        ]
+        "timeline": inspection_db.get_timeline(period),
     }
 
 
 def emit_realtime_updates():
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT 1")
-    row = cur.fetchone()
-    conn.close()
-
-    if row is not None:
-        socketio.emit("new_inspection", row_to_inspection(row))
+    inspections = inspection_db.get_inspections(limit=1)
+    if inspections:
+        socketio.emit("new_inspection", inspections[0])
 
     socketio.emit("status_update", get_session_summary())
 
 
-def create_inspection_record(hide_id, defects, snapshot_path=None, created_at=None):
-    if created_at is None:
-        created_at = datetime.utcnow().isoformat()
-
+def create_inspection_record(
+    hide_id,
+    defects,
+    snapshot_path=None,
+    created_at=None,
+    defect_area_percent=0,
+    leather_area=0,
+    defect_area=0,
+    machine_status=None,
+):
     total_defects = len(defects)
-    classification = "Bad" if total_defects > 0 else "Good"
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute("""
-        INSERT INTO inspections (
-            hide_id,
-            classification,
-            total_defects,
-            defects_json,
-            snapshot_path,
-            created_at
-        )
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        hide_id,
-        classification,
-        total_defects,
-        json.dumps(defects),
-        snapshot_path,
-        created_at,
-    ))
-
-    inspection_id = cur.lastrowid
-
-    for defect in defects:
-        cur.execute("""
-            INSERT INTO defect_log (
-                inspection_id,
-                defect_type,
-                confidence,
-                bbox_x,
-                bbox_y,
-                bbox_w,
-                bbox_h
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        """, (
-            inspection_id,
-            defect.get("type", "unknown"),
-            defect.get("confidence", 0),
-            defect.get("x", 0),
-            defect.get("y", 0),
-            defect.get("w", 0),
-            defect.get("h", 0),
-        ))
-
-    conn.commit()
-
-    cur.execute("SELECT * FROM inspections WHERE id = ?", (inspection_id,))
-    row = cur.fetchone()
-    conn.close()
-
-    inspection = row_to_inspection(row)
+    classification = "Bad" if float(defect_area_percent or 0) >= 20 else "Good"
+    inspection_id = inspection_db.save_inspection(
+        hide_id=hide_id,
+        classification=classification,
+        defects=defects,
+        total_defects=total_defects,
+        defect_area_percent=defect_area_percent,
+        leather_area=leather_area,
+        defect_area=defect_area,
+        image_path=snapshot_path,
+        machine_status=machine_status,
+        created_at=created_at,
+    )
+    inspection = inspection_db.get_inspection(inspection_id)
 
     socketio.emit("new_inspection", inspection)
     socketio.emit("status_update", get_session_summary())
-
     return inspection
 
 
 def reset_history(delete_captures=False):
-    conn = get_db_connection()
-    cur = conn.cursor()
-    cur.execute("DELETE FROM defect_log")
-    cur.execute("DELETE FROM inspections")
-    conn.commit()
-    conn.close()
-
+    inspection_db.clear_all()
     deleted_files = []
 
     if delete_captures:
@@ -364,8 +119,8 @@ def reset_history(delete_captures=False):
             try:
                 file_path.unlink()
                 deleted_files.append(file_path.name)
-            except Exception as e:
-                print(f"Failed to delete {file_path}: {e}")
+            except OSError as error:
+                print(f"Failed to delete {file_path}: {error}")
 
     socketio.emit("status_update", {
         "total_inspected": 0,
@@ -373,7 +128,6 @@ def reset_history(delete_captures=False):
         "bad_count": 0,
         "defect_rate": 0,
     })
-
     return deleted_files
 
 
@@ -386,6 +140,10 @@ def api_status():
             "model": "YOLOv8n",
             "platform": "Raspberry Pi 5",
             "camera": "Pi Camera Module 3",
+        },
+        "ports": {
+            "api": API_PORT,
+            "stream": STREAM_PORT,
         },
         "session": get_session_summary(),
         "analytics": {
@@ -400,47 +158,29 @@ def stream_status():
         "status": "running",
         "streaming": True,
         "camera_connected": True,
-        "source": "raspberry-pi-5"
+        "source": "app5.py",
+        "port": STREAM_PORT,
+        "video_feed": f"http://0.0.0.0:{STREAM_PORT}/video_feed",
     })
 
 
 @app.route("/api/inspections/latest", methods=["GET"])
 def latest_inspection():
-    conn = get_db_connection()
-    cur = conn.cursor()
+    inspections = inspection_db.get_inspections(limit=1)
+    if not inspections:
+        return jsonify(None)
 
-    cur.execute("SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT 1")
-    row = cur.fetchone()
-    conn.close()
-
-    if row is None:
-        return jsonify({
-            "message": "No inspection has been recorded yet"
-        }), 404
-
-    return jsonify(row_to_inspection(row))
-
+    return jsonify(inspections[0])
 
 @app.route("/api/inspections", methods=["GET"])
 def get_inspections():
     limit = request.args.get("limit", default=20, type=int)
     limit = max(1, min(limit, 100))
-
-    conn = get_db_connection()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT * FROM inspections ORDER BY datetime(created_at) DESC LIMIT ?",
-        (limit,)
-    )
-    rows = cur.fetchall()
-    conn.close()
-
-    inspections = [row_to_inspection(row) for row in rows]
+    inspections = inspection_db.get_inspections(limit=limit)
 
     return jsonify({
         "count": len(inspections),
-        "inspections": inspections
+        "inspections": inspections,
     })
 
 
@@ -470,6 +210,28 @@ def analytics_timeline():
     return jsonify(get_timeline_data(period))
 
 
+@app.route("/api/analytics/quality", methods=["GET"])
+def analytics_quality():
+    period = request.args.get("period", default="today", type=str)
+    return jsonify(get_quality_distribution(period))
+
+
+@app.route("/api/analytics/defect-area", methods=["GET"])
+def analytics_defect_area():
+    period = request.args.get("period", default="today", type=str)
+    return jsonify(get_defect_area_distribution(period))
+
+
+@app.route("/api/config", methods=["GET"])
+def api_config():
+    return jsonify({
+        "api_port": API_PORT,
+        "stream_port": STREAM_PORT,
+        "database": str(DB_PATH),
+        "captures_dir": str(CAPTURES_DIR),
+    })
+
+
 @app.route("/api/inspections", methods=["POST"])
 def create_inspection():
     data = request.get_json(silent=True) or {}
@@ -478,6 +240,10 @@ def create_inspection():
     defects = data.get("defects", [])
     snapshot_path = data.get("snapshot_path")
     created_at = data.get("created_at")
+    defect_area_percent = data.get("defect_area_percent", 0)
+    leather_area = data.get("leather_area", 0)
+    defect_area = data.get("defect_area", 0)
+    machine_status = data.get("machine_status")
 
     if not hide_id:
         return jsonify({"error": "hide_id is required"}), 400
@@ -490,6 +256,10 @@ def create_inspection():
         defects=defects,
         snapshot_path=snapshot_path,
         created_at=created_at,
+        defect_area_percent=defect_area_percent,
+        leather_area=leather_area,
+        defect_area=defect_area,
+        machine_status=machine_status,
     )
 
     return jsonify(inspection), 201
@@ -599,15 +369,17 @@ if __name__ == "__main__":
     init_db()
 
     print(f"Database: {DB_PATH}")
-    print("API status: http://0.0.0.0:5000/api/status")
-    print("Stream status: http://0.0.0.0:5000/api/stream/status")
-    print("Latest inspection: http://0.0.0.0:5000/api/inspections/latest")
-    print("Inspection history: http://0.0.0.0:5000/api/inspections")
-    print("Analytics summary: http://0.0.0.0:5000/api/analytics/summary")
-    print("Analytics overview: http://0.0.0.0:5000/api/analytics?period=today")
-    print("Analytics defects: http://0.0.0.0:5000/api/analytics/defects?period=today")
-    print("Analytics timeline: http://0.0.0.0:5000/api/analytics/timeline?period=today")
-    print("Trigger update: http://0.0.0.0:5000/api/trigger-update")
-    print("Reset history: http://0.0.0.0:5000/api/history/reset")
+    print(f"API status: http://0.0.0.0:{API_PORT}/api/status")
+    print(f"Stream status: http://0.0.0.0:{API_PORT}/api/stream/status")
+    print(f"Latest inspection: http://0.0.0.0:{API_PORT}/api/inspections/latest")
+    print(f"Inspection history: http://0.0.0.0:{API_PORT}/api/inspections")
+    print(f"Analytics summary: http://0.0.0.0:{API_PORT}/api/analytics/summary")
+    print(f"Analytics overview: http://0.0.0.0:{API_PORT}/api/analytics?period=today")
+    print(f"Analytics defects: http://0.0.0.0:{API_PORT}/api/analytics/defects?period=today")
+    print(f"Analytics timeline: http://0.0.0.0:{API_PORT}/api/analytics/timeline?period=today")
+    print(f"Trigger update: http://0.0.0.0:{API_PORT}/api/trigger-update")
+    print(f"Reset history: http://0.0.0.0:{API_PORT}/api/history/reset")
 
-    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
+    socketio.run(app, host="0.0.0.0", port=5001, debug=False)
+
+

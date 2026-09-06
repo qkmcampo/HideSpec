@@ -20,7 +20,7 @@ app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-DEFECT_TYPES = ['color_defect', 'hole', 'fold']
+DEFECT_TYPES = ['paint_stain', 'hole', 'fold']
 inspection_counter = 0
 inspections_db = []
 

@@ -1,0 +1,16 @@
+*.db
+*.db-journal
+*.pt
+*.onnx
+*.npy
+__pycache__/
+*.py[cod]
+venv/
+.venv/
+node_modules/
+dist/
+.env
+.env.*
+!*.env.example
+pi_backend/app5_updated.py
+pi_backend/captures/
