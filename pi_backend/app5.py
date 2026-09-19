@@ -692,11 +692,6 @@ def inspection_worker():
             cv2.drawContours(frame, [contour], -1, (0, 255, 0), 2)
             lx, ly, lw, lh = cv2.boundingRect(contour)
 
-            if current_hide_id is None:
-                current_hide_id = time.strftime("HIDE-%m%d-%H%M%S")
-                current_inspection_saved = False
-                print(f"[SAVE] Hide detected: {current_hide_id}")
-
             if ly <= MIDDLE_Y_MAX and (ly + lh) >= MIDDLE_Y_MIN:
                 leather_in_middle_zone = True
 
@@ -782,14 +777,15 @@ def inspection_worker():
         ):
             print("[PI] Hide entered inspection area. Stopping for projection...")
 
-            # A new hide can enter the center while the previous hide is
-            # still visible to segmentation. Start a fresh database record
-            # for each center-inspection event instead of reusing the first
-            # hide's saved flag and ID.
-            if current_inspection_saved or current_hide_id is None:
-                current_hide_id = time.strftime("HIDE-%m%d-%H%M%S") + f"-{int(time.time() * 1000) % 1000:03d}"
-                current_inspection_saved = False
-                print(f"[SAVE] New inspection started: {current_hide_id}")
+            # Each center-inspection event represents one leather hide.
+            # Create the database ID here, not when segmentation first sees
+            # the hide, so touching/overlapping hides cannot reuse a record.
+            current_hide_id = (
+                time.strftime("HIDE-%m%d-%H%M%S")
+                + f"-{int(time.time() * 1000) % 1000:03d}"
+            )
+            current_inspection_saved = False
+            print(f"[SAVE] Inspection started: {current_hide_id}")
 
             is_center_paused = True
             has_paused_for_current_hide = True
@@ -844,23 +840,6 @@ def inspection_worker():
                 [(d[0], (d[4] - d[2]) * (d[5] - d[3])) for d in last_detections],
                 piece_area,
             )
-
-            if (
-                current_hide_id is not None
-                and not current_inspection_saved
-                and current_grade in ("GOOD", "BAD")
-                and piece_area > 0
-            ):
-                print(f"[SAVE] Saving inspection for {current_hide_id}")
-                current_inspection_saved = save_inspection_record(
-                    current_hide_id,
-                    list(last_detections),
-                    current_grade,
-                    current_ratio,
-                    piece_area,
-                    "BELT: RUNNING",
-                    frame,
-                )
 
         # -------------------------------------------------
         # 4. Freeze and Project a Fresh Stable Detection
@@ -972,6 +951,27 @@ def inspection_worker():
                     print("[PROJECTOR] No projectable defect found.")
 
                 projection_captured = True
+
+        # Retry the database write while this hide is still paused. This
+        # prevents a temporary API/network failure from losing the record.
+        if (
+            is_center_paused
+            and projection_captured
+            and current_hide_id is not None
+            and not current_inspection_saved
+            and current_grade in ("GOOD", "BAD")
+            and piece_area > 0
+        ):
+            print(f"[SAVE] Retrying inspection save for {current_hide_id}")
+            current_inspection_saved = save_inspection_record(
+                current_hide_id,
+                list(last_detections),
+                current_grade,
+                current_ratio,
+                piece_area,
+                "BELT: PAUSED IN CENTER",
+                frame,
+            )
 
         # -------------------------------------------------
         # 5. End Projection Pause / Resume Conveyor
