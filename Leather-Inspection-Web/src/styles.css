@@ -61,7 +61,13 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
   margin-bottom: 8px;
 }
 
-.monitor-panel { grid-area: monitor; }`r`n`r`n.monitor-panel .card { height: 100%; display: flex; flex-direction: column; }`r`n`r`n.monitor-panel .feed { flex: 1; min-height: clamp(480px, 62vh, 760px); }`r`n`r`n.monitor-panel .feed img { object-position: center top; }
+.monitor-panel { grid-area: monitor; }
+
+.monitor-panel .card { height: 100%; display: flex; flex-direction: column; }
+
+.monitor-panel .feed { flex: 1; min-height: clamp(480px, 62vh, 760px); }
+
+.monitor-panel .feed img { object-position: center top; }
 
 .right-panel {
   grid-area: right;

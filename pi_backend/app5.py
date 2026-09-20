@@ -1223,6 +1223,21 @@ def inspection_worker():
             "ratio": round(current_ratio, 1),
             "reason": current_reason,
             "piece_area": int(piece_area),
+            "leather_detected": contour is not None,
+            "hide_id": current_hide_id,
+            "inspection_saved": current_inspection_saved,
+            "defect_count": len(last_detections),
+            "defects": [
+                {
+                    "type": detection[0],
+                    "confidence": round(float(detection[6]), 3),
+                    "x": detection[2],
+                    "y": detection[3],
+                    "w": detection[4] - detection[2],
+                    "h": detection[5] - detection[3],
+                }
+                for detection in last_detections
+            ],
             "status": status_text,
             "projector_status": projector_status,
             "projected_defects": len(frozen_projection_detections),

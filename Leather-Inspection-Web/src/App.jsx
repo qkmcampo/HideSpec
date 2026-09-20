@@ -14,11 +14,12 @@ function Metric({ label, value, tone = '' }) {
 
 function Monitor({ data, refresh }) {
   const session = data.status?.session || {};
-  const machine = data.stream?.machine || {};
   const stats = data.stream?.stats || {};
-  const live = data.feedReady;
-  const currentResult = live ? (stats.grade || machine.current_result || 'SCANNING') : 'OFFLINE';
-  const currentHint = live ? 'Camera feed is active and ready for inspection.' : 'Waiting for camera feed.';
+  const live = data.feedReady && data.stream?.streaming !== false;
+  const currentResult = live ? (stats.grade || 'SCANNING') : 'OFFLINE';
+  const currentHint = live
+    ? (stats.status || 'Camera feed is active and ready for inspection.')
+    : 'Waiting for camera feed.';
 
   return (
     <main className="page dashboard">
@@ -75,8 +76,12 @@ function Monitor({ data, refresh }) {
             </div>
             {data.latest ? (
               <div className="latest current-details">
-                <strong>{data.latest.hide_id}</strong>
-                <span>{data.latest.classification} ? {data.latest.total_defects || 0} defects</span>
+                <strong>{stats.hide_id || data.latest.hide_id}</strong>
+                <span>
+                  {stats.hide_id && !stats.inspection_saved
+                    ? `${stats.grade || 'SCANNING'} ? ${stats.defect_count || 0} defects`
+                    : `${data.latest.classification} ? ${data.latest.total_defects || 0} defects`}
+                </span>
                 <small>{data.latest.created_at || '?'}</small>
               </div>
             ) : (
@@ -218,11 +223,17 @@ export default function App() {
   };
 
   const refreshMonitor = async () => {
-    const [status, latest, history] = await Promise.all([api.status(), api.latest(), api.history()]);
+    const [status, latest, history, stream] = await Promise.all([
+      api.status(),
+      api.latest(),
+      api.history(),
+      api.stream(),
+    ]);
     setMonitor((current) => ({
       ...current,
       status,
       latest,
+      stream,
       history: history.inspections || [],
       reset: async () => {
         if (window.confirm('Reset all inspection history?')) {
