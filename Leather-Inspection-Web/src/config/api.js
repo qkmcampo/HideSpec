@@ -1,6 +1,6 @@
 const DEFAULT_PI_IP_ADDRESS = '192.168.100.114';
-const DEFAULT_API_PORT = 5000;
-const DEFAULT_STREAM_PORT = 5001;
+const DEFAULT_API_PORT = 5001;
+const DEFAULT_STREAM_PORT = 5000;
 
 function normalizeBaseUrl(value, fallbackPort) {
   if (!value || typeof value !== 'string') return null;
