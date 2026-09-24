@@ -4,7 +4,7 @@ Threaded execution engine separating real-time vision/hardware control
 from Web HTTP streaming, while also driving the calibrated projector overlay.
 """
 
-from flask import Flask, Response, jsonify, render_template
+from flask import Flask, Response, jsonify
 from ultralytics import YOLO
 from picamera2 import Picamera2
 from leather_cv import LeatherCV
@@ -1418,7 +1418,12 @@ def generate_frames():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return jsonify({
+        "service": "HideSpec inspection stream",
+        "status": "running",
+        "stream": "/video_feed",
+        "stats": "/api/stream/status",
+    })
 
 
 @app.route("/stats")
