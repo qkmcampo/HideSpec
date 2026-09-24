@@ -1239,6 +1239,14 @@ def inspection_worker():
                 for detection in last_detections
             ],
             "status": status_text,
+            "marker_status": (
+                "DISCONNECTED"
+                if arduino is None
+                else "MARKING"
+                if is_currently_stopped
+                else "READY"
+            ),
+            "arduino_connected": arduino is not None,
             "projector_status": projector_status,
             "projected_defects": len(frozen_projection_detections),
             "servo_state": servo_state,

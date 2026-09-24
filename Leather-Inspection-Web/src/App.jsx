@@ -42,7 +42,7 @@ function Monitor({ data, refresh }) {
             </div>
             <div className="segregation-item">
               <span>Marker / projector</span>
-              <strong>{stats.projector_status || 'UNKNOWN'}</strong>
+              <strong>{stats.marker_status || stats.projector_status || 'UNKNOWN'}</strong>
             </div>
             <div className="segregation-item">
               <span>Projected defects</span>
