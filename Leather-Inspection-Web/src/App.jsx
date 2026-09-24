@@ -13,8 +13,12 @@ function Metric({ label, value, tone = '' }) {
 function Monitor({ data, refresh }) {
   const session = data.status?.session || {};
   const stats = data.stream?.stats || {};
-  const servoState = stats.servo_state || 'UNKNOWN';
-  const servoPosition = servoState === 'GOOD' ? '125°' : servoState === 'BAD' ? '180°' : '—';
+  const currentGrade = stats.grade || 'OFFLINE';
+  const currentGradeClass = currentGrade === 'GOOD'
+    ? 'good'
+    : currentGrade === 'BAD'
+      ? 'bad'
+      : 'neutral';
 
   return (
     <main className="page dashboard">
@@ -28,25 +32,14 @@ function Monitor({ data, refresh }) {
           </div>
         </Card>
 
-        <Card title="Segregation Status">
-          <div className="segregation-grid">
-            <div className="segregation-item">
-              <span>Current result</span>
-              <strong className={servoState === 'GOOD' ? 'good' : servoState === 'BAD' ? 'bad' : ''}>
-                {servoState}
-              </strong>
-            </div>
-            <div className="segregation-item">
-              <span>Servo position</span>
-              <strong>{servoPosition}</strong>
-            </div>
-            <div className="segregation-item">
-              <span>Marker / projector</span>
-              <strong>{stats.marker_status || stats.projector_status || 'UNKNOWN'}</strong>
-            </div>
-            <div className="segregation-item">
-              <span>Projected defects</span>
-              <strong>{stats.projected_defects || 0}</strong>
+        <Card title="Current Inspection Result">
+          <div className={`inspection-result-card ${currentGradeClass}`}>
+            <span>Current grade</span>
+            <strong>{currentGrade}</strong>
+            <p>{stats.reason || 'Waiting for the next inspection.'}</p>
+            <div className="inspection-result-details">
+              <span>Defects: <b>{stats.defect_count || 0}</b></span>
+              <span>Defect area: <b>{stats.ratio || 0}%</b></span>
             </div>
           </div>
         </Card>
