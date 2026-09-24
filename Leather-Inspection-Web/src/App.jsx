@@ -11,6 +11,8 @@ function Metric({ label, value, tone = '' }) {
 }
 
 function Monitor({ data, refresh }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [resultFilter, setResultFilter] = useState('all');
   const session = data.status?.session || {};
   const stats = data.stream?.stats || {};
   const currentGrade = stats.grade || 'OFFLINE';
@@ -19,6 +21,32 @@ function Monitor({ data, refresh }) {
     : currentGrade === 'BAD'
       ? 'bad'
       : 'neutral';
+  const filteredHistory = data.history.filter((item) => {
+    const matchesSearch = String(item.hide_id || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesFilter = resultFilter === 'all' || item.classification === resultFilter;
+    return matchesSearch && matchesFilter;
+  });
+
+  const exportCsv = () => {
+    const headers = ['Hide ID', 'Result', 'Defects', 'Defect Area (%)', 'Recorded'];
+    const rows = filteredHistory.map((item) => [
+      item.hide_id,
+      item.classification,
+      item.total_defects || 0,
+      item.defect_area_percent || 0,
+      item.created_at || '',
+    ]);
+    const csv = [headers, ...rows]
+      .map((row) => row.map((value) => `"${String(value).replaceAll('"', '""')}"`).join(','))
+      .join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `hidespec-inspections-${new Date().toISOString().slice(0, 10)}.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
 
   return (
     <main className="page dashboard">
@@ -45,11 +73,25 @@ function Monitor({ data, refresh }) {
         </Card>
 
         <Card title="Recent Inspections">
+          <div className="record-tools">
+            <input
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search Hide ID"
+              aria-label="Search by Hide ID"
+            />
+            <select value={resultFilter} onChange={(event) => setResultFilter(event.target.value)} aria-label="Filter inspection result">
+              <option value="all">All results</option>
+              <option value="Good">Good only</option>
+              <option value="Bad">Bad only</option>
+            </select>
+            <button onClick={exportCsv} disabled={!filteredHistory.length}>Export CSV</button>
+          </div>
           <div className="table compact-table">
             <table>
               <thead><tr><th>Hide ID</th><th>Result</th><th>Defects</th><th>Defect Area</th><th>Recorded</th><th>Capture</th></tr></thead>
               <tbody>
-                {data.history.length ? data.history.map((item) => (
+                {filteredHistory.length ? filteredHistory.map((item) => (
                   <tr key={item.id || item.created_at}>
                     <td>{item.hide_id}</td>
                     <td className={item.classification === 'Good' ? 'good' : 'bad'}>{item.classification}</td>
@@ -58,15 +100,21 @@ function Monitor({ data, refresh }) {
                     <td>{item.created_at}</td>
                     <td>{item.snapshot_path ? <a href={`${apiBase}${item.snapshot_path}`} target="_blank" rel="noreferrer">View</a> : '—'}</td>
                   </tr>
-                )) : <tr><td colSpan="6">No inspection history yet.</td></tr>}
+                )) : <tr><td colSpan="6">No matching inspection records.</td></tr>}
               </tbody>
             </table>
           </div>
           <div className="monitor-actions">
-            <span>Data refreshes automatically every 2 seconds.</span>
+            <span>Last record saved: {data.history[0]?.created_at || 'No records yet'}</span>
             <button onClick={refresh}>Refresh now</button>
           </div>
         </Card>
+
+        {(data.status?.error || data.historyError) && (
+          <div className="error-banner" role="alert">
+            <strong>Connection error:</strong> {data.status?.error || data.historyError}
+          </div>
+        )}
       </section>
     </main>
   );
@@ -176,7 +224,7 @@ function Analytics({ data, period, setPeriod }) {
 export default function App() {
   const [tab, setTab] = useState('monitor');
   const [period, setPeriod] = useState('all');
-  const [monitor, setMonitor] = useState({ status: {}, history: [] });
+  const [monitor, setMonitor] = useState({ status: {}, history: [], historyError: '' });
   const [analytics, setAnalytics] = useState({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {} });
 
   const refreshAnalytics = async () => {
@@ -213,6 +261,7 @@ export default function App() {
       status,
       stream,
       history: history.inspections || [],
+      historyError: history.error || '',
       reset: async () => {
         if (window.confirm('Reset all inspection history?')) {
           await api.reset();

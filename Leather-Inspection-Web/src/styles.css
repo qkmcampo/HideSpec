@@ -276,6 +276,36 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
   font-size: .78rem;
 }
 
+.record-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.record-tools input,
+.record-tools select {
+  min-width: 170px;
+  padding: 9px 10px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 8px;
+  background: var(--card, #fff);
+  color: inherit;
+  font: inherit;
+  font-size: .85rem;
+}
+
+.record-tools button:disabled { cursor: not-allowed; opacity: .5; }
+
+.error-banner {
+  padding: 12px 14px;
+  border: 1px solid rgba(214, 69, 69, .35);
+  border-radius: 10px;
+  background: rgba(214, 69, 69, .08);
+  color: #b42318;
+  font-size: .84rem;
+}
+
 .analytics-page { max-width: 1280px; }
 
 .analytics-header {

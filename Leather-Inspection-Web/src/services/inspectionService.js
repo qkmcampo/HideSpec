@@ -23,7 +23,7 @@ async function request(url, options = {}) {
 export const inspectionService = {
   status: () => request(`${API_BASE_URL}/api/status`).catch((error) => ({ status: 'offline', error: error.message, session: {} })),
   latest: () => request(`${API_BASE_URL}/api/inspections/latest`).catch(() => null),
-  history: (limit = 10) => request(`${API_BASE_URL}/api/inspections?limit=${limit}`).catch(() => ({ inspections: [] })),
+  history: (limit = 100) => request(`${API_BASE_URL}/api/inspections?limit=${limit}`).catch((error) => ({ inspections: [], error: error.message })),
   stream: () => request(`${STREAM_URL}/api/stream/status`).catch((error) => ({ status: 'offline', error: error.message, machine: {} })),
   analytics: (period) => request(`${API_BASE_URL}/api/analytics?period=${period}`).catch(() => ({})),
   defects: (period) => request(`${API_BASE_URL}/api/analytics/defects?period=${period}`).catch(() => ({ defects: [] })),
