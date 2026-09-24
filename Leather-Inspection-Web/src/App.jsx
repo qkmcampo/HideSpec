@@ -173,32 +173,8 @@ function Analytics({ data, period, setPeriod }) {
   );
 }
 
-function About() {
-  return (
-    <main className="page">
-      <Card title="HideSpec">
-        <p className="eyebrow">CAPSTONE DESIGN PROJECT</p>
-        <h1>Deep Learning-Based Defect Classification for Leather Hides Inspection</h1>
-        <p>with Segregation System · Technological Institute of the Philippines · Team 10</p>
-      </Card>
-      <Card title="System Architecture">
-        <ol>
-          <li>Feeding and transport</li>
-          <li>Camera inspection and YOLOv8 defect detection</li>
-          <li>Encoder-synchronised marking</li>
-          <li>Automated sorting and segregation</li>
-        </ol>
-      </Card>
-      <Card title="Technology Stack">
-        <p>Raspberry Pi 5 · Arduino Uno · YOLOv8n · Flask + SQLite · React + Vite</p>
-      </Card>
-    </main>
-  );
-}
-
 export default function App() {
   const [tab, setTab] = useState('monitor');
-  const [dark, setDark] = useState(false);
   const [period, setPeriod] = useState('all');
   const [monitor, setMonitor] = useState({ status: {}, history: [] });
   const [analytics, setAnalytics] = useState({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {} });
@@ -264,16 +240,13 @@ export default function App() {
 
   const page = tab === 'monitor'
     ? <Monitor data={monitor} refresh={refreshMonitor} />
-    : tab === 'analytics'
-      ? <Analytics data={analytics} period={period} setPeriod={setPeriod} />
-      : <About />;
+    : <Analytics data={analytics} period={period} setPeriod={setPeriod} />;
 
   return (
-    <div className={dark ? 'app dark' : 'app'}>
+    <div className="app">
       <header>
         <b>HIDESPEC</b>
-        <nav>{[['monitor', 'Monitor'], ['analytics', 'Analytics'], ['about', 'About']].map(([key, label]) => <button key={key} className={tab === key ? 'selected' : ''} onClick={() => setTab(key)}>{label}</button>)}</nav>
-        <aside><button onClick={() => setDark(!dark)}>{dark ? 'Light' : 'Dark'}</button></aside>
+        <nav>{[['monitor', 'Monitor'], ['analytics', 'Analytics']].map(([key, label]) => <button key={key} className={tab === key ? 'selected' : ''} onClick={() => setTab(key)}>{label}</button>)}</nav>
       </header>
       {page}
     </div>
