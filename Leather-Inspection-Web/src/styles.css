@@ -177,20 +177,43 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
 
 .monitor-summary-grid {
   display: grid;
-  grid-template-columns: minmax(0, 1080px);
+  grid-template-columns: minmax(220px, .9fr) minmax(280px, 1.1fr) minmax(360px, 1.5fr);
+  grid-template-areas:
+    "header header header"
+    "summary current recent";
   gap: 12px;
-  max-width: 1080px;
+  max-width: 1500px;
   margin: 0 auto;
+  align-items: stretch;
 }
+
+.monitor-header {
+  grid-area: header;
+  min-height: 82px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 18px 22px;
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 12px;
+  background: var(--card, #fff);
+  box-shadow: 0 4px 16px rgba(15, 23, 42, .05);
+}
+
+.monitor-header h1 { margin: 0; font-size: clamp(1.35rem, 2vw, 1.8rem); }
+.monitor-header p { margin-bottom: 4px; }
+.monitor-header > span { color: var(--muted, #667085); font-size: .8rem; }
 
 .monitor-summary-grid .card {
   margin: 0;
   padding: 20px;
+  height: 100%;
 }
 
-.monitor-summary-grid > .card:first-child { min-height: 190px; }
-.monitor-summary-grid > .card:nth-child(2) { min-height: 190px; }
-.monitor-summary-grid > .card:nth-child(3) { min-height: 420px; }
+.monitor-summary-card { grid-area: summary; min-height: 420px; }
+.monitor-current-card { grid-area: current; min-height: 420px; }
+.monitor-recent-card { grid-area: recent; min-height: 420px; }
 
 .segregation-grid {
   display: grid;
@@ -379,6 +402,30 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
   .analytics-header .periods { justify-content: start; }
   .defect-summary-grid, .analytics-columns, .segregation-grid { grid-template-columns: 1fr; }
   .monitor-actions { align-items: stretch; flex-direction: column; }
+}
+
+@media (max-width: 1050px) {
+  .monitor-summary-grid {
+    grid-template-columns: 1fr 1fr;
+    grid-template-areas:
+      "header header"
+      "summary current"
+      "recent recent";
+  }
+}
+
+@media (max-width: 680px) {
+  .monitor-summary-grid {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "header"
+      "summary"
+      "current"
+      "recent";
+  }
+
+  .monitor-header { align-items: flex-start; flex-direction: column; }
+  .monitor-summary-card, .monitor-current-card, .monitor-recent-card { min-height: auto; }
 }
 
 

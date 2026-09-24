@@ -2,8 +2,8 @@
 import { inspectionService as api, API_BASE_URL as apiBase } from './services/inspectionService';
 
 const periods = [['today', 'Today'], ['week', '7 Days'], ['month', '30 Days'], ['all', 'All Time']];
-function Card({ title, children }) {
-  return <section className="card"><h2>{title}</h2>{children}</section>;
+function Card({ title, children, className = '' }) {
+  return <section className={`card ${className}`}><h2>{title}</h2>{children}</section>;
 }
 
 function Metric({ label, value, tone = '' }) {
@@ -51,7 +51,15 @@ function Monitor({ data, refresh }) {
   return (
     <main className="page dashboard">
       <section className="monitor-summary-grid">
-        <Card title="Session Summary">
+        <div className="monitor-header">
+          <div>
+            <p className="eyebrow">HIDESPEC MONITOR</p>
+            <h1>Inspection Overview</h1>
+          </div>
+          <span>Live database updates every 2 seconds</span>
+        </div>
+
+        <Card title="Session Summary" className="monitor-summary-card">
           <div className="metrics session-metrics">
             <Metric label="Total inspected" value={session.total_inspected} />
             <Metric label="Passed" value={session.good_count} tone="good" />
@@ -60,7 +68,7 @@ function Monitor({ data, refresh }) {
           </div>
         </Card>
 
-        <Card title="Current Inspection Result">
+        <Card title="Current Inspection Result" className="monitor-current-card">
           <div className={`inspection-result-card ${currentGradeClass}`}>
             <span>Current grade</span>
             <strong>{currentGrade}</strong>
@@ -72,7 +80,7 @@ function Monitor({ data, refresh }) {
           </div>
         </Card>
 
-        <Card title="Recent Inspections">
+        <Card title="Recent Inspections" className="monitor-recent-card">
           <div className="record-tools">
             <input
               value={searchTerm}
