@@ -12,6 +12,9 @@ function Metric({ label, value, tone = '' }) {
 
 function Monitor({ data, refresh }) {
   const session = data.status?.session || {};
+  const stats = data.stream?.stats || {};
+  const servoState = stats.servo_state || 'UNKNOWN';
+  const servoPosition = servoState === 'GOOD' ? '125°' : servoState === 'BAD' ? '180°' : '—';
 
   return (
     <main className="page dashboard">
@@ -22,6 +25,29 @@ function Monitor({ data, refresh }) {
             <Metric label="Passed" value={session.good_count} tone="good" />
             <Metric label="Failed" value={session.bad_count} tone="bad" />
             <Metric label="Defect rate" value={`${session.defect_rate || 0}%`} tone="accent" />
+          </div>
+        </Card>
+
+        <Card title="Segregation Status">
+          <div className="segregation-grid">
+            <div className="segregation-item">
+              <span>Current result</span>
+              <strong className={servoState === 'GOOD' ? 'good' : servoState === 'BAD' ? 'bad' : ''}>
+                {servoState}
+              </strong>
+            </div>
+            <div className="segregation-item">
+              <span>Servo position</span>
+              <strong>{servoPosition}</strong>
+            </div>
+            <div className="segregation-item">
+              <span>Marker / projector</span>
+              <strong>{stats.projector_status || 'UNKNOWN'}</strong>
+            </div>
+            <div className="segregation-item">
+              <span>Projected defects</span>
+              <strong>{stats.projected_defects || 0}</strong>
+            </div>
           </div>
         </Card>
 
@@ -208,13 +234,15 @@ export default function App() {
   };
 
   const refreshMonitor = async () => {
-    const [status, history] = await Promise.all([
+    const [status, history, stream] = await Promise.all([
       api.status(),
       api.history(),
+      api.stream(),
     ]);
     setMonitor((current) => ({
       ...current,
       status,
+      stream,
       history: history.inspections || [],
       reset: async () => {
         if (window.confirm('Reset all inspection history?')) {
