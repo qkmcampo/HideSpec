@@ -1,9 +1,7 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { inspectionService as api, subscribeToInspections as subscribe, API_BASE_URL as apiBase, STREAM_URL as streamBase, VIDEO_FEED_URL as videoFeedUrl } from './services/inspectionService';
+import { inspectionService as api, API_BASE_URL as apiBase } from './services/inspectionService';
 
 const periods = [['today', 'Today'], ['week', '7 Days'], ['month', '30 Days'], ['all', 'All Time']];
-const formatDefectType = (type) => String(type || 'unknown').replaceAll('_', ' ').replace(/\b\w/g, (letter) => letter.toUpperCase());
-
 function Card({ title, children }) {
   return <section className="card"><h2>{title}</h2>{children}</section>;
 }
@@ -14,87 +12,42 @@ function Metric({ label, value, tone = '' }) {
 
 function Monitor({ data, refresh }) {
   const session = data.status?.session || {};
-  const stats = data.stream?.stats || {};
-  const live = data.feedReady && data.stream?.streaming !== false;
-  const currentResult = live ? (stats.grade || 'SCANNING') : 'OFFLINE';
-  const currentHint = live
-    ? (stats.status || 'Camera feed is active and ready for inspection.')
-    : 'Waiting for camera feed.';
 
   return (
     <main className="page dashboard">
-      <section className="inspection-layout">
-        <div className="monitor-panel">
-          <Card title="Live Leather Inspection">
-            <span className={`pill ${live ? 'good' : 'bad'}`}>{live ? 'LIVE' : 'OFFLINE'}</span>
-            <div className="feed feed-hero">
-              <img
-                src={videoFeedUrl}
-                alt="Live leather inspection stream"
-                onLoad={data.setFeedReady}
-                onError={data.setFeedDown}
-              />
-            </div>
-            <p className="result">{live ? 'SCANNING' : 'OFFLINE'}</p>
-          </Card>
-        </div>
+      <section className="monitor-summary-grid">
+        <Card title="Session Summary">
+          <div className="metrics session-metrics">
+            <Metric label="Total inspected" value={session.total_inspected} />
+            <Metric label="Passed" value={session.good_count} tone="good" />
+            <Metric label="Failed" value={session.bad_count} tone="bad" />
+            <Metric label="Defect rate" value={`${session.defect_rate || 0}%`} tone="accent" />
+          </div>
+        </Card>
 
-        <aside className="right-panel">
-          <Card title="Session Summary">
-            <div className="metrics session-metrics">
-              <Metric label="Total inspected" value={session.total_inspected} />
-              <Metric label="Passed" value={session.good_count} tone="good" />
-              <Metric label="Failed" value={session.bad_count} tone="bad" />
-              <Metric label="Defect rate" value={`${session.defect_rate || 0}%`} tone="accent" />
-            </div>
-          </Card>
-
-          <Card title="Recent Inspections">
-            <div className="table compact-table">
-              <table>
-                <thead><tr><th>Hide ID</th><th>Result</th><th>Defects</th><th>Recorded</th><th>Capture</th></tr></thead>
-                <tbody>
-                  {data.history.length ? data.history.map((item) => (
-                    <tr key={item.id || item.created_at}>
-                      <td>{item.hide_id}</td>
-                      <td className={item.classification === 'Good' ? 'good' : 'bad'}>{item.classification}</td>
-                      <td>{item.total_defects || 0}</td>
-                      <td>{item.created_at}</td>
-                      <td>{item.snapshot_path ? <a href={`${apiBase}${item.snapshot_path}`} target="_blank" rel="noreferrer">View</a> : '—'}</td>
-                    </tr>
-                  )) : <tr><td colSpan="5">No inspection history yet.</td></tr>}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          <Card title="Current Inspection">
-            <div className={`current-result ${String(currentResult).includes('BAD') ? 'bad-result' : 'good-result'}`}>
-              <div className="current-status">{live ? 'LIVE MONITOR' : 'OFFLINE'}</div>
-              <strong>{currentResult || 'WAITING FOR LEATHER'}</strong>
-              <span>{currentHint}</span>
-            </div>
-            {data.latest ? (
-              <div className="latest current-details">
-                <strong>{stats.hide_id || data.latest.hide_id}</strong>
-                <span>
-                  {stats.hide_id && !stats.inspection_saved
-                    ? `${stats.grade || 'SCANNING'} ? ${stats.defect_count || 0} defects`
-                    : `${data.latest.classification} ? ${data.latest.total_defects || 0} defects`}
-                </span>
-                <small>{data.latest.created_at || '?'}</small>
-              </div>
-            ) : (
-              <p className="empty-state">The latest completed inspection will appear here.</p>
-            )}
-          </Card>
-
-          <Card title="Controls">
-            <button onClick={refresh}>Refresh data</button>
-            <button className="danger" onClick={data.reset}>Reset history</button>
-            <p className="connection">API: {apiBase}<br />Stream: {streamBase}</p>
-          </Card>
-        </aside>
+        <Card title="Recent Inspections">
+          <div className="table compact-table">
+            <table>
+              <thead><tr><th>Hide ID</th><th>Result</th><th>Defects</th><th>Defect Area</th><th>Recorded</th><th>Capture</th></tr></thead>
+              <tbody>
+                {data.history.length ? data.history.map((item) => (
+                  <tr key={item.id || item.created_at}>
+                    <td>{item.hide_id}</td>
+                    <td className={item.classification === 'Good' ? 'good' : 'bad'}>{item.classification}</td>
+                    <td>{item.total_defects || 0}</td>
+                    <td>{item.defect_area_percent || 0}%</td>
+                    <td>{item.created_at}</td>
+                    <td>{item.snapshot_path ? <a href={`${apiBase}${item.snapshot_path}`} target="_blank" rel="noreferrer">View</a> : '—'}</td>
+                  </tr>
+                )) : <tr><td colSpan="6">No inspection history yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="monitor-actions">
+            <span>Data refreshes automatically every 2 seconds.</span>
+            <button onClick={refresh}>Refresh now</button>
+          </div>
+        </Card>
       </section>
     </main>
   );
@@ -107,16 +60,31 @@ function Analytics({ data, period, setPeriod }) {
   const quality = data.quality || {};
   const area = data.area || {};
   const maximum = Math.max(1, ...timeline.flatMap((item) => [item.good || 0, item.bad || 0]));
-  const total = defects.reduce((sum, item) => sum + item.count, 0);
+  const defectTypes = [
+    { key: 'hole', label: 'Holes', tone: 'hole' },
+    { key: 'paint_stain', label: 'Paint stains', tone: 'paint' },
+    { key: 'fold', label: 'Folds', tone: 'fold' },
+  ];
+  const countFor = (key) => defects.find((item) => item.type === key)?.count || 0;
+  const totalDefects = defectTypes.reduce((sum, item) => sum + countFor(item.key), 0);
+  const maxDefectCount = Math.max(1, ...defectTypes.map((item) => countFor(item.key)));
 
   return (
-    <main className="page">
-      <div className="periods">
-        {periods.map(([key, label]) => (
-          <button className={period === key ? 'active' : ''} key={key} onClick={() => setPeriod(key)}>{label}</button>
-        ))}
+    <main className="page analytics-page">
+      <div className="analytics-header">
+        <div>
+          <p className="eyebrow">QUALITY CONTROL</p>
+          <h1>Inspection Analytics</h1>
+          <p>Track leather quality and the three detected defect categories.</p>
+        </div>
+        <div className="periods">
+          {periods.map(([key, label]) => (
+            <button className={period === key ? 'active' : ''} key={key} onClick={() => setPeriod(key)}>{label}</button>
+          ))}
+        </div>
       </div>
-      <Card title="Overview">
+
+      <Card title="Inspection Overview">
         <div className="metrics">
           <Metric label="Inspected" value={summary.total_inspections} />
           <Metric label="Passed" value={summary.good_count} tone="good" />
@@ -126,18 +94,47 @@ function Analytics({ data, period, setPeriod }) {
           <Metric label="Avg. defects" value={summary.avg_defects_per_hide} tone="accent" />
         </div>
       </Card>
-      <Card title="Quality Index">
-        <strong className="quality">{summary.pass_rate || 0}%</strong>
-        <div className="progress"><i style={{ width: `${summary.pass_rate || 0}%` }} /></div>
-      </Card>
-      <Card title="Threshold Check">
-        <div className="metrics">
-          <Metric label="Good by threshold" value={quality.good} tone="good" />
-          <Metric label="Bad by threshold" value={quality.bad} tone="bad" />
-          <Metric label="Threshold" value={`${quality.threshold_percent || 20}%`} tone="accent" />
-          <Metric label="Avg defect area" value={`${area.avg_percent || 0}%`} tone="accent" />
+
+      <Card title="Defect Categories">
+        <div className="defect-summary-grid">
+          {defectTypes.map((item) => {
+            const count = countFor(item.key);
+            const share = totalDefects ? count / totalDefects * 100 : 0;
+            return (
+              <article className={`defect-summary-card ${item.tone}`} key={item.key}>
+                <div className="defect-summary-top">
+                  <span>{item.label}</span>
+                  <strong>{count}</strong>
+                </div>
+                <div className="defect-bar"><i style={{ width: `${count / maxDefectCount * 100}%` }} /></div>
+                <small>{share.toFixed(1)}% of detected defects</small>
+              </article>
+            );
+          })}
         </div>
       </Card>
+
+      <div className="analytics-columns">
+        <Card title="Quality Classification">
+          <div className="quality-panel">
+            <strong className="quality">{summary.pass_rate || 0}%</strong>
+            <span>Pass rate</span>
+            <div className="progress"><i style={{ width: `${summary.pass_rate || 0}%` }} /></div>
+            <div className="quality-breakdown">
+              <span className="good">Good: {quality.good || summary.good_count || 0}</span>
+              <span className="bad">Bad: {quality.bad || summary.bad_count || 0}</span>
+            </div>
+          </div>
+        </Card>
+        <Card title="Defect Area Threshold">
+          <div className="metrics threshold-metrics">
+            <Metric label="Threshold" value={`${quality.threshold_percent || 20}%`} tone="accent" />
+            <Metric label="Average area" value={`${area.avg_percent || 0}%`} tone="accent" />
+            <Metric label="Above threshold" value={quality.bad || 0} tone="bad" />
+          </div>
+        </Card>
+      </div>
+
       {timeline.length > 0 && (
         <Card title="Inspection Timeline">
           <div className="chart">
@@ -153,18 +150,6 @@ function Analytics({ data, period, setPeriod }) {
           </div>
         </Card>
       )}
-      <Card title="Defect Distribution">
-        {defects.length ? defects.map((item, index) => {
-          const share = total ? item.count / total * 100 : 0;
-          return (
-            <div className="defect" key={item.type}>
-              <span>{formatDefectType(item.type)}</span>
-              <div><i style={{ width: `${share}%`, background: ['#f0883e', '#f85149', '#58a6ff', '#3fb950'][index % 4] }} /></div>
-              <strong>{item.count} ({share.toFixed(1)}%)</strong>
-            </div>
-          );
-        }) : <p>No defects recorded for this period.</p>}
-      </Card>
     </main>
   );
 }
@@ -196,7 +181,7 @@ export default function App() {
   const [tab, setTab] = useState('monitor');
   const [dark, setDark] = useState(false);
   const [period, setPeriod] = useState('all');
-  const [monitor, setMonitor] = useState({ status: {}, latest: null, history: [], feedReady: false });
+  const [monitor, setMonitor] = useState({ status: {}, history: [] });
   const [analytics, setAnalytics] = useState({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {} });
 
   const refreshAnalytics = async () => {
@@ -223,17 +208,13 @@ export default function App() {
   };
 
   const refreshMonitor = async () => {
-    const [status, latest, history, stream] = await Promise.all([
+    const [status, history] = await Promise.all([
       api.status(),
-      api.latest(),
       api.history(),
-      api.stream(),
     ]);
     setMonitor((current) => ({
       ...current,
       status,
-      latest,
-      stream,
       history: history.inspections || [],
       reset: async () => {
         if (window.confirm('Reset all inspection history?')) {
@@ -246,10 +227,8 @@ export default function App() {
 
   useEffect(() => {
     refreshMonitor();
-    const unsubscribe = subscribe(refreshMonitor);
     const timer = setInterval(refreshMonitor, 2000);
     return () => {
-      unsubscribe();
       clearInterval(timer);
     };
   }, []);
@@ -262,10 +241,8 @@ export default function App() {
     }
   }, [tab, period]);
 
-  const setFeedReady = () => setMonitor((current) => ({ ...current, feedReady: true }));
-  const setFeedDown = () => setMonitor((current) => ({ ...current, feedReady: false }));
   const page = tab === 'monitor'
-    ? <Monitor data={{ ...monitor, setFeedReady, setFeedDown }} refresh={refreshMonitor} />
+    ? <Monitor data={monitor} refresh={refreshMonitor} />
     : tab === 'analytics'
       ? <Analytics data={analytics} period={period} setPeriod={setPeriod} />
       : <About />;
