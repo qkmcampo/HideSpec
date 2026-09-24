@@ -189,7 +189,7 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
   gap: 12px;
   max-width: 1500px;
   margin: 0 auto;
-  align-items: start;
+  align-items: stretch;
 }
 
 .monitor-header {
@@ -213,11 +213,38 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
 .monitor-summary-grid .card {
   margin: 0;
   padding: 20px;
+  height: 100%;
 }
 
-.monitor-summary-card { grid-area: summary; min-height: 260px; }
-.monitor-current-card { grid-area: current; min-height: 260px; }
-.monitor-recent-card { grid-area: recent; min-height: 360px; }
+.monitor-summary-card,
+.monitor-current-card,
+.monitor-recent-card {
+  min-height: 420px;
+}
+
+.monitor-summary-card,
+.monitor-current-card,
+.monitor-recent-card {
+  display: flex;
+  flex-direction: column;
+}
+
+.monitor-summary-card .session-metrics {
+  flex: 1;
+  align-content: center;
+}
+
+.monitor-current-card .inspection-result-card {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.monitor-recent-card .table {
+  flex: 1;
+  min-height: 230px;
+}
 
 .segregation-grid {
   display: grid;
