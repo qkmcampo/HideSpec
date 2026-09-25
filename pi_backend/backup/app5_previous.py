@@ -146,7 +146,11 @@ def model_size_mb(path):
     if os.path.isfile(path):
         return round(os.path.getsize(path) / (1024 * 1024), 2)
     if os.path.isdir(path):
-        total = sum(os.path.getsize(os.path.join(root, name)) for root, _dirs, files in os.walk(path) for name in files)
+        total = sum(
+            os.path.getsize(os.path.join(root, name))
+            for root, _dirs, files in os.walk(path)
+            for name in files
+        )
         return round(total / (1024 * 1024), 2)
     return None
 
@@ -154,6 +158,7 @@ def model_size_mb(path):
 def memory_usage_mb():
     if resource is None:
         return None
+    # Linux reports ru_maxrss in kilobytes.
     return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)
 
 
@@ -182,28 +187,6 @@ cv_engine = LeatherCV(
     max_defect_count=MAX_DEFECT_COUNT,
     critical_classes=CRITICAL_CLASSES,
 )
-
-# ----- Leather / not-leather material classifier (optional) -----
-# Put the trained model next to this file and it is used automatically by
-# return_control.py instead of the geometric shape test.
-#   leather_cls_ncnn_model/   (folder, fastest on the Pi)   or
-#   leather_cls.pt            (single file, fallback)
-# Without it the system still runs, using the shape test as before.
-LEATHER_CLASSIFIER_PATHS = ["leather_cls_ncnn_model", "leather_cls.pt"]
-LEATHER_MIN_PROB = 0.70      # >= this -> LEATHER
-LEATHER_REJECT_PROB = 0.40   # <= this -> NOT LEATHER (between the two = UNCERTAIN)
-
-for _path in LEATHER_CLASSIFIER_PATHS:
-    if os.path.exists(_path):
-        try:
-            cv_engine.load_classifier(_path)
-            cv_engine.leather_min_prob = LEATHER_MIN_PROB
-            cv_engine.leather_reject_prob = LEATHER_REJECT_PROB
-        except Exception as exc:
-            print(f"[CV] Could not load leather classifier {_path}: {exc}")
-        break
-else:
-    print("[CV] No leather classifier found - using the shape test instead.")
 
 projector_mapper = ProjectorMapper(
     width=PROJECTOR_WIDTH,
@@ -458,7 +441,9 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
     snapshot_path = f"/captures/{snapshot_name}"
     if frame is not None:
         snapshot_file = os.path.join(CAPTURES_DIR, snapshot_name)
-        encoded_ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        encoded_ok, encoded = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+        )
         if encoded_ok:
             try:
                 with open(snapshot_file, "wb") as capture_file:
@@ -477,8 +462,12 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
     payload = {
         "hide_id": hide_id,
         "defects": [
-            {"type": name, "confidence": round(float(conf), 4), "x": int(x1), "y": int(y1),
-             "w": int(x2 - x1), "h": int(y2 - y1)}
+            {
+                "type": name,
+                "confidence": round(float(conf), 4),
+                "x": int(x1), "y": int(y1),
+                "w": int(x2 - x1), "h": int(y2 - y1),
+            }
             for name, _class_id, x1, y1, x2, y2, conf, _cx, _cy in detections
         ],
         "defect_area_percent": round(float(ratio or 0), 1),
@@ -1098,7 +1087,7 @@ def publish_screening_frame(frame, contour, area, grade, reason, status, fractio
         cv2.putText(frame, grade, (x, max(25, y - 10)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
     for i, text in enumerate((status, f"GRADE: {grade}",
-                              f"{'MATERIAL' if cv_engine.has_classifier() else 'SHAPE'} MATCH: {fraction:.0%}", reason)):
+                              f"SHAPE MATCH: {fraction:.0%}", reason)):
         cv2.putText(frame, text, (25, 50 + 40 * i),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
     latest_stats = {
@@ -1113,11 +1102,7 @@ def publish_screening_frame(frame, contour, area, grade, reason, status, fractio
         "status": status,
         "projector_status": "OFF", "projected_defects": 0,
         "servo_state": servo_state, "inference_ms": 0.0,
-        # One screening score, reported under both keys so existing dashboard
-        # code keeps working. "screening_method" says which test produced it.
-        "shape_match": round(fraction, 3), "color_match": round(fraction, 3),
-        "screening_method": "material" if cv_engine.has_classifier() else "shape",
-        "defect_evaluated": False,
+        "shape_match": round(fraction, 3), "color_match": round(fraction, 3), "defect_evaluated": False,
     }
     ok, buffer = cv2.imencode(".jpg", cv2.resize(frame, (720, 822)),
                              [cv2.IMWRITE_JPEG_QUALITY, 70])
@@ -1302,10 +1287,7 @@ def inspection_worker():
             and not is_currently_stopped
             and not is_center_paused
         ):
-            print(
-                "[PI] Object entered inspection area. Checking "
-                + ("material..." if cv_engine.has_classifier() else "shape...")
-            )
+            print("[PI] Object entered inspection area. Checking shape...")
             clear_projector()
             accepted = screen_or_return(
                 arduino, picam2, cv_engine, publish_screening_frame,
@@ -1462,8 +1444,13 @@ def inspection_worker():
                     last_save_attempt = time.monotonic()
                     print(f"[SAVE] Saving inspection for {current_hide_id}", flush=True)
                     current_inspection_saved = save_inspection_record(
-                        current_hide_id, list(last_detections), frozen_segregation_grade,
-                        current_ratio, piece_area, "BELT: PAUSED IN CENTER", frame
+                        current_hide_id,
+                        list(last_detections),
+                        frozen_segregation_grade,
+                        current_ratio,
+                        piece_area,
+                        "BELT: PAUSED IN CENTER",
+                        frame,
                     )
 
                 print(
@@ -1487,14 +1474,23 @@ def inspection_worker():
                 projection_captured = True
 
         if (
-            is_center_paused and projection_captured and current_hide_id is not None
-            and not current_inspection_saved and frozen_segregation_grade in ("GOOD", "BAD")
-            and piece_area > 0 and time.monotonic() - last_save_attempt >= 2.0
+            is_center_paused
+            and projection_captured
+            and current_hide_id is not None
+            and not current_inspection_saved
+            and frozen_segregation_grade in ("GOOD", "BAD")
+            and piece_area > 0
+            and time.monotonic() - last_save_attempt >= 2.0
         ):
             last_save_attempt = time.monotonic()
             current_inspection_saved = save_inspection_record(
-                current_hide_id, list(last_detections), frozen_segregation_grade,
-                current_ratio, piece_area, "BELT: PAUSED IN CENTER", frame
+                current_hide_id,
+                list(last_detections),
+                frozen_segregation_grade,
+                current_ratio,
+                piece_area,
+                "BELT: PAUSED IN CENTER",
+                frame,
             )
 
         # -------------------------------------------------
