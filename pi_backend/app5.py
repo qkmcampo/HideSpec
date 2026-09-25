@@ -397,9 +397,23 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
     snapshot_path = f"/captures/{snapshot_name}"
     if frame is not None:
         snapshot_file = os.path.join(CAPTURES_DIR, snapshot_name)
-        if not cv2.imwrite(snapshot_file, frame):
+        encoded_ok, encoded = cv2.imencode(
+            ".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 85]
+        )
+        if encoded_ok:
+            try:
+                with open(snapshot_file, "wb") as capture_file:
+                    capture_file.write(encoded.tobytes())
+                print(f"[CAPTURE] Saved {snapshot_file}", flush=True)
+            except OSError as error:
+                print(f"[CAPTURE] Failed to write {snapshot_file}: {error}", flush=True)
+                snapshot_path = None
+        else:
             print(f"[CAPTURE] Failed to save {snapshot_file}", flush=True)
             snapshot_path = None
+    else:
+        print(f"[CAPTURE] No inspection frame available for {hide_id}", flush=True)
+        snapshot_path = None
 
     payload = {
         "hide_id": hide_id,
