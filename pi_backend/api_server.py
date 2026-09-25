@@ -390,6 +390,12 @@ if __name__ == "__main__":
     print(f"Trigger update: http://0.0.0.0:{API_PORT}/api/trigger-update")
     print(f"Reset history: http://0.0.0.0:{API_PORT}/api/history/reset")
 
-    socketio.run(app, host="0.0.0.0", port=5001, debug=False)
+    socketio.run(
+        app,
+        host="0.0.0.0",
+        port=API_PORT,
+        debug=False,
+        allow_unsafe_werkzeug=True,
+    )
 
 

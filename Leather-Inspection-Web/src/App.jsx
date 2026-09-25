@@ -29,6 +29,13 @@ function Monitor({ data, refresh }) {
     : currentGrade === 'BAD'
       ? 'bad'
       : 'neutral';
+  const currentGradeMessage = currentGrade === 'BAD'
+    ? 'Leather with defects detected.'
+    : currentGrade === 'GOOD'
+      ? 'Leather passed inspection.'
+      : currentGrade === 'NO LEATHER'
+        ? 'Waiting for the next leather inspection.'
+        : 'Waiting for the next inspection.';
   const filteredHistory = data.history.filter((item) => {
     const matchesSearch = String(item.hide_id || '').toLowerCase().includes(searchTerm.toLowerCase());
     const matchesFilter = resultFilter === 'all' || item.classification === resultFilter;
@@ -95,7 +102,7 @@ function Monitor({ data, refresh }) {
           <div className={`inspection-result-card ${currentGradeClass}`}>
             <span>Current grade</span>
             <strong>{currentGrade}</strong>
-            <p>{stats.reason || 'Waiting for the next inspection.'}</p>
+            <p>{currentGradeMessage}</p>
             <div className="inspection-result-details">
               <span>Defects: <b>{stats.defect_count || 0}</b></span>
               <span>Defect area: <b>{stats.ratio || 0}%</b></span>
@@ -192,7 +199,6 @@ function Analytics({ data, period, setPeriod }) {
   const countFor = (key) => defects.find((item) => item.type === key)?.count || 0;
   const totalDefects = defectTypes.reduce((sum, item) => sum + countFor(item.key), 0);
   const maxDefectCount = Math.max(1, ...defectTypes.map((item) => countFor(item.key)));
-  const performance = data.performance || {};
 
   return (
     <main className="page analytics-page">
@@ -237,20 +243,6 @@ function Analytics({ data, period, setPeriod }) {
             );
           })}
         </div>
-      </Card>
-
-      <Card title="Case 5 — System Performance">
-        <div className="metrics performance-metrics">
-          <Metric label="Model size" value={performance.model_size_mb != null ? `${performance.model_size_mb} MB` : 'Unavailable'} />
-          <Metric label="Inference time" value={performance.inference_ms ? `${performance.inference_ms} ms/frame` : 'Waiting'} tone="accent" />
-          <Metric label="Inference speed" value={performance.inference_fps ? `${performance.inference_fps} FPS` : 'Waiting'} tone="good" />
-          <Metric label="Runtime memory" value={performance.memory_mb != null ? `${performance.memory_mb} MB` : 'Unavailable'} />
-          <Metric label="Recall" value={performance.recall != null ? `${performance.recall}%` : 'Requires labeled test'} />
-          <Metric label="Model MACs" value={performance.macs != null ? `${performance.macs} M` : 'Requires profiling'} />
-        </div>
-        <p className="performance-note">
-          Recall and MACs are not guessed from live camera data. Enter them after running the labeled test set and model profiling.
-        </p>
       </Card>
 
       <div className="analytics-columns">

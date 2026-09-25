@@ -1453,19 +1453,6 @@ def inspection_worker():
                 # leather's 5-second diverter hold to finish.
                 frozen_segregation_grade = current_grade
 
-                if (
-                    current_hide_id is not None
-                    and not current_inspection_saved
-                    and frozen_segregation_grade in ("GOOD", "BAD")
-                    and piece_area > 0
-                ):
-                    last_save_attempt = time.monotonic()
-                    print(f"[SAVE] Saving inspection for {current_hide_id}", flush=True)
-                    current_inspection_saved = save_inspection_record(
-                        current_hide_id, list(last_detections), frozen_segregation_grade,
-                        current_ratio, piece_area, "BELT: PAUSED IN CENTER", frame
-                    )
-
                 print(
                     f"[SEGREGATION] Frozen grade = "
                     f"{frozen_segregation_grade}."
@@ -1485,17 +1472,6 @@ def inspection_worker():
                     print("[PROJECTOR] No projectable defect found.")
 
                 projection_captured = True
-
-        if (
-            is_center_paused and projection_captured and current_hide_id is not None
-            and not current_inspection_saved and frozen_segregation_grade in ("GOOD", "BAD")
-            and piece_area > 0 and time.monotonic() - last_save_attempt >= 2.0
-        ):
-            last_save_attempt = time.monotonic()
-            current_inspection_saved = save_inspection_record(
-                current_hide_id, list(last_detections), frozen_segregation_grade,
-                current_ratio, piece_area, "BELT: PAUSED IN CENTER", frame
-            )
 
         # -------------------------------------------------
         # 4B. Safe Segregation Command
@@ -2145,6 +2121,29 @@ def inspection_worker():
             (255, 255, 255),
             2,
         )
+
+        # Save only after all live-feed overlays have been rendered.  This
+        # keeps the stored inspection image identical to what the operator
+        # sees: leather contour, defect boxes/labels, grade, measurements,
+        # projector guides, and machine status.
+        if (
+            is_center_paused and projection_captured and current_hide_id is not None
+            and not current_inspection_saved
+            and frozen_segregation_grade in ("GOOD", "BAD")
+            and piece_area > 0
+            and time.monotonic() - last_save_attempt >= 2.0
+        ):
+            last_save_attempt = time.monotonic()
+            print(f"[SAVE] Saving annotated inspection for {current_hide_id}", flush=True)
+            current_inspection_saved = save_inspection_record(
+                current_hide_id,
+                list(last_detections),
+                frozen_segregation_grade,
+                current_ratio,
+                piece_area,
+                "BELT: PAUSED IN CENTER",
+                frame.copy(),
+            )
 
         # Thread-safe JPEG stream for Flask.
         display_frame = cv2.resize(frame, (720, 822))

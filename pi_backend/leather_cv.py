@@ -79,6 +79,23 @@ class LeatherCV:
         # How fast the reference follows lighting drift (0 = never).
         self.adapt_rate = 0.03
 
+        # The inspection application can optionally use a material
+        # classifier.  This CV engine currently performs the reliable shape
+        # screening in return_control.py, so keep a compatible classifier API
+        # and fall back safely when no material-classifier implementation is
+        # available.
+        self._classifier_path = None
+
+    def load_classifier(self, path):
+        """Accept an optional classifier path without breaking shape mode."""
+        self._classifier_path = None
+        print(f"[CV] Material classifier not enabled; using shape screening ({path}).")
+        return False
+
+    def has_classifier(self):
+        """Return whether a usable material classifier is active."""
+        return False
+
     # -------------------------------------------------------------
     # Calibration
     # -------------------------------------------------------------
