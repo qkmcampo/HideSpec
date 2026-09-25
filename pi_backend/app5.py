@@ -388,9 +388,19 @@ latest_stats = {
 }
 
 API_SERVER_URL = os.getenv("HIDESPEC_API_URL", "http://127.0.0.1:5001")
+CAPTURES_DIR = os.path.join(os.path.dirname(__file__), "captures")
+os.makedirs(CAPTURES_DIR, exist_ok=True)
 
 
-def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status_text):
+def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status_text, frame=None):
+    snapshot_name = f"{hide_id}.jpg"
+    snapshot_path = f"/captures/{snapshot_name}"
+    if frame is not None:
+        snapshot_file = os.path.join(CAPTURES_DIR, snapshot_name)
+        if not cv2.imwrite(snapshot_file, frame):
+            print(f"[CAPTURE] Failed to save {snapshot_file}", flush=True)
+            snapshot_path = None
+
     payload = {
         "hide_id": hide_id,
         "defects": [
@@ -408,6 +418,7 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
         "leather_area": int(piece_area or 0),
         "defect_area": int((piece_area or 0) * float(ratio or 0) / 100.0),
         "classification": "Bad" if grade == "BAD" else "Good",
+        "snapshot_path": snapshot_path,
         "machine_status": status_text,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
     }
@@ -1394,6 +1405,7 @@ def inspection_worker():
                         current_ratio,
                         piece_area,
                         "BELT: PAUSED IN CENTER",
+                        frame,
                     )
 
                 if frozen_projection_detections:
@@ -1425,6 +1437,7 @@ def inspection_worker():
                 current_ratio,
                 piece_area,
                 "BELT: PAUSED IN CENTER",
+                frame,
             )
 
         # -------------------------------------------------
