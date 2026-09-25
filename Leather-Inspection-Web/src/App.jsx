@@ -192,6 +192,7 @@ function Analytics({ data, period, setPeriod }) {
   const countFor = (key) => defects.find((item) => item.type === key)?.count || 0;
   const totalDefects = defectTypes.reduce((sum, item) => sum + countFor(item.key), 0);
   const maxDefectCount = Math.max(1, ...defectTypes.map((item) => countFor(item.key)));
+  const performance = data.performance || {};
 
   return (
     <main className="page analytics-page">
@@ -238,6 +239,20 @@ function Analytics({ data, period, setPeriod }) {
         </div>
       </Card>
 
+      <Card title="Case 5 — System Performance">
+        <div className="metrics performance-metrics">
+          <Metric label="Model size" value={performance.model_size_mb != null ? `${performance.model_size_mb} MB` : 'Unavailable'} />
+          <Metric label="Inference time" value={performance.inference_ms ? `${performance.inference_ms} ms/frame` : 'Waiting'} tone="accent" />
+          <Metric label="Inference speed" value={performance.inference_fps ? `${performance.inference_fps} FPS` : 'Waiting'} tone="good" />
+          <Metric label="Runtime memory" value={performance.memory_mb != null ? `${performance.memory_mb} MB` : 'Unavailable'} />
+          <Metric label="Recall" value={performance.recall != null ? `${performance.recall}%` : 'Requires labeled test'} />
+          <Metric label="Model MACs" value={performance.macs != null ? `${performance.macs} M` : 'Requires profiling'} />
+        </div>
+        <p className="performance-note">
+          Recall and MACs are not guessed from live camera data. Enter them after running the labeled test set and model profiling.
+        </p>
+      </Card>
+
       <div className="analytics-columns">
         <Card title="Quality Classification">
           <div className="quality-panel">
@@ -282,17 +297,18 @@ export default function App() {
   const [tab, setTab] = useState('monitor');
   const [period, setPeriod] = useState('all');
   const [monitor, setMonitor] = useState({ status: {}, history: [], historyError: '' });
-  const [analytics, setAnalytics] = useState({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {} });
+  const [analytics, setAnalytics] = useState({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {}, performance: {} });
 
   const refreshAnalytics = async () => {
     setAnalytics((current) => ({ ...current, loading: true }));
     try {
-      const [summary, defects, timeline, quality, area] = await Promise.all([
+      const [summary, defects, timeline, quality, area, stream] = await Promise.all([
         api.analytics(period),
         api.defects(period),
         api.timeline(period),
         api.quality(period),
         api.defectArea(period),
+        api.stream(),
       ]);
       setAnalytics({
         loading: false,
@@ -301,9 +317,10 @@ export default function App() {
         timeline: timeline.timeline || [],
         quality,
         area,
+        performance: stream.stats?.performance || stream.stats || {},
       });
     } catch {
-      setAnalytics({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {} });
+      setAnalytics({ loading: false, summary: {}, defects: [], timeline: [], quality: {}, area: {}, performance: {} });
     }
   };
 

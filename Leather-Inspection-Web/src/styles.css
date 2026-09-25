@@ -459,6 +459,8 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
 }
 
 .analytics-page { max-width: 1280px; }
+.performance-metrics { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+.performance-note { margin: 12px 0 0; color: var(--muted, #667085); font-size: .82rem; }
 
 .analytics-header {
   display: flex;
@@ -521,6 +523,7 @@ p { margin-top: 0; font-size: .8rem; line-height: 1.35; }
   .analytics-header { align-items: start; flex-direction: column; }
   .analytics-header .periods { justify-content: start; }
   .defect-summary-grid, .analytics-columns, .segregation-grid { grid-template-columns: 1fr; }
+  .performance-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .monitor-actions { align-items: stretch; flex-direction: column; }
 }
 

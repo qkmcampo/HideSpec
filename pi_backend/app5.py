@@ -20,6 +20,10 @@ import os
 import json
 from urllib import request as urlrequest
 from urllib.error import HTTPError, URLError
+try:
+    import resource
+except ImportError:
+    resource = None
 
 
 app = Flask(__name__)
@@ -136,6 +140,45 @@ PROJECTION_REARM_CLEAR_FRAMES = 5
 MODEL_PATH = "best_ncnn_model" if os.path.exists("best_ncnn_model") else "best.pt"
 model = YOLO(MODEL_PATH)
 CLASS_NAMES = model.names
+
+
+def model_size_mb(path):
+    if os.path.isfile(path):
+        return round(os.path.getsize(path) / (1024 * 1024), 2)
+    if os.path.isdir(path):
+        total = sum(
+            os.path.getsize(os.path.join(root, name))
+            for root, _dirs, files in os.walk(path)
+            for name in files
+        )
+        return round(total / (1024 * 1024), 2)
+    return None
+
+
+def memory_usage_mb():
+    if resource is None:
+        return None
+    # Linux reports ru_maxrss in kilobytes.
+    return round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 2)
+
+
+MODEL_SIZE_MB = model_size_mb(MODEL_PATH)
+
+
+def performance_snapshot(inference_ms=0.0):
+    inference_ms = float(inference_ms or 0)
+    return {
+        "model": MODEL_PATH,
+        "model_size_mb": MODEL_SIZE_MB,
+        "input_size": IMG_SIZE,
+        "inference_ms": round(inference_ms, 1),
+        "inference_fps": round(1000 / inference_ms, 2) if inference_ms > 0 else None,
+        "memory_mb": memory_usage_mb(),
+        "macs": None,
+        "macs_status": "Requires model profiling",
+        "recall": None,
+        "recall_status": "Requires labeled ground-truth test results",
+    }
 
 cv_engine = LeatherCV(
     frame_width=FRAME_WIDTH,
@@ -385,6 +428,7 @@ latest_stats = {
     "inspection_saved": False,
     "camera_connected": True,
     "updated_at": time.time(),
+    "performance": performance_snapshot(),
 }
 
 API_SERVER_URL = os.getenv("HIDESPEC_API_URL", "http://127.0.0.1:5001")
@@ -1973,6 +2017,7 @@ def inspection_worker():
             "inspection_saved": current_inspection_saved,
             "camera_connected": True,
             "updated_at": time.time(),
+            "performance": performance_snapshot(last_inference_ms),
             "segmentation_raw_area": int(getattr(cv_engine, "last_raw_area", 0)),
             "segmentation_refined_area": int(getattr(cv_engine, "last_piece_area", piece_area)),
         }
