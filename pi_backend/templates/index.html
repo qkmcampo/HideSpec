@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Conveyor Vision & Marking System</title>
+    <style>
+      body { background:#121212; color:white; font-family:Arial, sans-serif; text-align:center; margin:0; padding:20px; }
+      .container { display:flex; flex-direction:column; align-items:center; }
+      .stream-box { border:3px solid #00ff00; border-radius:8px; width:720px; box-shadow:0 0 15px rgba(0,255,0,0.2); }
+      .dashboard { display:grid; grid-template-columns:repeat(5, minmax(0, 1fr)); gap:10px; width:720px; margin-top:20px; }
+      .card { background:#1e1e1e; padding:12px 8px; border-radius:8px; min-width:0; border:1px solid #333; box-shadow:0 2px 8px rgba(0,0,0,0.5); }
+      .card h3 { margin:0 0 8px 0; font-size:12px; color:#aaa; text-transform:uppercase; letter-spacing:1px; }
+      .card .val { font-size:22px; font-weight:bold; }
+      .grade-GOOD { color:#00ff00; }
+      .grade-BAD { color:#ff3333; }
+      .grade-NO { color:#aaaaaa; }
+
+      .reject-overlay {
+        display:none;
+        position:fixed;
+        inset:0;
+        z-index:9999;
+        background:rgba(0,0,0,0.82);
+        align-items:center;
+        justify-content:center;
+        padding:24px;
+      }
+
+      .reject-overlay.show {
+        display:flex;
+      }
+
+      .reject-box {
+        width:min(680px, 92vw);
+        background:#1e1e1e;
+        border:3px solid #ff3333;
+        border-radius:14px;
+        padding:34px 28px;
+        box-shadow:0 0 35px rgba(255,51,51,0.35);
+      }
+
+      .reject-title {
+        color:#ff3333;
+        font-size:40px;
+        font-weight:800;
+        margin-bottom:16px;
+        letter-spacing:1px;
+      }
+
+      .reject-message {
+        font-size:23px;
+        line-height:1.45;
+      }
+
+      .reject-key {
+        display:inline-block;
+        margin-top:20px;
+        padding:9px 18px;
+        border:2px solid #fff;
+        border-radius:8px;
+        font-size:24px;
+        font-weight:bold;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Conveyor Vision & Defect Inspector</h1>
+      <img class="stream-box" src="/video_feed">
+      
+      <div id="reject-overlay" class="reject-overlay">
+        <div class="reject-box">
+          <div class="reject-title">NOT LEATHER</div>
+          <div class="reject-message">
+            Please remove the object from the conveyor.
+            <br>
+            The system will remain stopped while the object is present.
+            <br>
+            <span class="reject-key">Resumes Automatically When Clear</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard">
+        <div class="card">
+          <h3>Belt Status</h3>
+          <div id="sys-status" class="val" style="color:#00ffff; font-size:14px;">RUNNING</div>
+        </div>
+        <div class="card">
+          <h3>Quality Grade</h3>
+          <div id="grade-val" class="val grade-NO">NO LEATHER</div>
+        </div>
+        <div class="card">
+          <h3>Defect Coverage</h3>
+          <div id="ratio-val" class="val">0.0%</div>
+        </div>
+        <div class="card">
+          <h3>Hide Area</h3>
+          <div id="area-val" class="val">0.0 cm²</div>
+        </div>
+        <div class="card">
+          <h3>Defect Area</h3>
+          <div id="defect-area-val" class="val">0.0 cm²</div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function updateDashboard() {
+        fetch('/stats')
+          .then(res => res.json())
+          .then(data => {
+            document.getElementById('sys-status').innerText = data.status;
+            
+            const gradeElem = document.getElementById('grade-val');
+            gradeElem.innerText = data.grade;
+            if (data.grade === 'GOOD') {
+              gradeElem.className = 'val grade-GOOD';
+            } else if (data.grade === 'BAD') {
+              gradeElem.className = 'val grade-BAD';
+            } else {
+              gradeElem.className = 'val grade-NO';
+            }
+
+            document.getElementById('ratio-val').innerText = data.ratio.toFixed(1) + '%';
+            document.getElementById('area-val').innerText = (data.piece_area_cm2 ?? 0).toFixed(1) + ' cm²';
+            document.getElementById('defect-area-val').innerText = (data.defect_area_cm2 ?? 0).toFixed(1) + ' cm²';
+
+            const rejectOverlay = document.getElementById('reject-overlay');
+            const isRejected =
+              data.grade === 'NOT LEATHER' ||
+              (typeof data.status === 'string' && data.status.includes('REMOVE OBJECT'));
+
+            if (isRejected) {
+              rejectOverlay.classList.add('show');
+            } else {
+              rejectOverlay.classList.remove('show');
+            }
+          })
+          .catch(err => console.error(err));
+      }
+      setInterval(updateDashboard, 500);
+    </script>
+  </body>
+</html>
