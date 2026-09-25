@@ -409,7 +409,7 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
                 print(f"[CAPTURE] Failed to write {snapshot_file}: {error}", flush=True)
                 snapshot_path = None
         else:
-            print(f"[CAPTURE] Failed to save {snapshot_file}", flush=True)
+            print(f"[CAPTURE] Failed to encode {snapshot_file}", flush=True)
             snapshot_path = None
     else:
         print(f"[CAPTURE] No inspection frame available for {hide_id}", flush=True)
@@ -421,10 +421,8 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
             {
                 "type": name,
                 "confidence": round(float(conf), 4),
-                "x": int(x1),
-                "y": int(y1),
-                "w": int(x2 - x1),
-                "h": int(y2 - y1),
+                "x": int(x1), "y": int(y1),
+                "w": int(x2 - x1), "h": int(y2 - y1),
             }
             for name, _class_id, x1, y1, x2, y2, conf, _cx, _cy in detections
         ],
@@ -436,10 +434,9 @@ def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status
         "machine_status": status_text,
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
     }
-    body = json.dumps(payload).encode("utf-8")
     request_object = urlrequest.Request(
         f"{API_SERVER_URL}/api/inspections",
-        data=body,
+        data=json.dumps(payload).encode("utf-8"),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -1394,16 +1391,6 @@ def inspection_worker():
                 # leather's 5-second diverter hold to finish.
                 frozen_segregation_grade = current_grade
 
-                print(
-                    f"[SEGREGATION] Frozen grade = "
-                    f"{frozen_segregation_grade}."
-                )
-
-                print(
-                    f"[PROJECTOR] Frozen "
-                    f"{len(frozen_projection_detections)} defect(s)."
-                )
-
                 if (
                     current_hide_id is not None
                     and not current_inspection_saved
@@ -1422,6 +1409,16 @@ def inspection_worker():
                         frame,
                     )
 
+                print(
+                    f"[SEGREGATION] Frozen grade = "
+                    f"{frozen_segregation_grade}."
+                )
+
+                print(
+                    f"[PROJECTOR] Frozen "
+                    f"{len(frozen_projection_detections)} defect(s)."
+                )
+
                 if frozen_projection_detections:
                     if project_detections(frozen_projection_detections):
                         projection_active = True
@@ -1432,8 +1429,6 @@ def inspection_worker():
 
                 projection_captured = True
 
-        # Retry a failed API write while this hide is still safely paused.
-        # This prevents a short API restart/network hiccup from losing a record.
         if (
             is_center_paused
             and projection_captured
