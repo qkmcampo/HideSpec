@@ -24,7 +24,22 @@ export const inspectionService = {
   status: () => request(`${API_BASE_URL}/api/status`).catch((error) => ({ status: 'offline', error: error.message, session: {} })),
   latest: () => request(`${API_BASE_URL}/api/inspections/latest`).catch(() => null),
   history: (limit = 100) => request(`${API_BASE_URL}/api/inspections?limit=${limit}`).catch((error) => ({ inspections: [], error: error.message })),
-  stream: () => request(`${STREAM_URL}/api/stream/status`).catch((error) => ({ status: 'offline', error: error.message, machine: {} })),
+  stream: async () => {
+    try {
+      const streamStatus = await request(`${STREAM_URL}/api/stream/status`);
+      if (streamStatus.stats) return streamStatus;
+
+      const stats = await request(`${STREAM_URL}/stats`);
+      return { ...streamStatus, stats };
+    } catch (error) {
+      try {
+        const stats = await request(`${STREAM_URL}/stats`);
+        return { status: 'running', streaming: true, stats };
+      } catch {
+        return { status: 'offline', error: error.message, machine: {} };
+      }
+    }
+  },
   analytics: (period) => request(`${API_BASE_URL}/api/analytics?period=${period}`).catch(() => ({})),
   defects: (period) => request(`${API_BASE_URL}/api/analytics/defects?period=${period}`).catch(() => ({ defects: [] })),
   timeline: (period) => request(`${API_BASE_URL}/api/analytics/timeline?period=${period}`).catch(() => ({ timeline: [] })),

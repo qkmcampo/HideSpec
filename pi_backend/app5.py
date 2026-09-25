@@ -17,10 +17,21 @@ import time
 import serial
 import threading
 import os
+import json
+from urllib import request as urlrequest
+from urllib.error import HTTPError, URLError
 
 
 app = Flask(__name__)
 resume_return_event = threading.Event()
+
+
+@app.after_request
+def add_cors_headers(response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # =====================================================
@@ -340,6 +351,8 @@ frozen_projection_detections = []
 # servo_state is the last known physical diverter side, not an angle.
 segregation_sent_for_current_hide = False
 servo_state = "GOOD"
+current_hide_id = None
+current_inspection_saved = False
 
 # Shared camera stream buffer
 frame_lock = threading.Lock()
@@ -367,7 +380,56 @@ latest_stats = {
     ),
     "projected_defects": 0,
     "servo_state": "GOOD",
+    "defect_count": 0,
+    "hide_id": None,
+    "inspection_saved": False,
+    "camera_connected": True,
+    "updated_at": time.time(),
 }
+
+API_SERVER_URL = os.getenv("HIDESPEC_API_URL", "http://127.0.0.1:5001")
+
+
+def save_inspection_record(hide_id, detections, grade, ratio, piece_area, status_text):
+    payload = {
+        "hide_id": hide_id,
+        "defects": [
+            {
+                "type": name,
+                "confidence": round(float(conf), 4),
+                "x": int(x1),
+                "y": int(y1),
+                "w": int(x2 - x1),
+                "h": int(y2 - y1),
+            }
+            for name, _class_id, x1, y1, x2, y2, conf, _cx, _cy in detections
+        ],
+        "defect_area_percent": round(float(ratio or 0), 1),
+        "leather_area": int(piece_area or 0),
+        "defect_area": int((piece_area or 0) * float(ratio or 0) / 100.0),
+        "classification": "Bad" if grade == "BAD" else "Good",
+        "machine_status": status_text,
+        "created_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime()),
+    }
+    body = json.dumps(payload).encode("utf-8")
+    request_object = urlrequest.Request(
+        f"{API_SERVER_URL}/api/inspections",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlrequest.urlopen(request_object, timeout=5) as response:
+            response.read()
+        print(f"[DB] Inspection saved for {hide_id}", flush=True)
+        return True
+    except HTTPError as error:
+        print(f"[DB] Save failed for {hide_id}: HTTP {error.code}", flush=True)
+    except URLError as error:
+        print(f"[DB] Save failed for {hide_id}: {error.reason}", flush=True)
+    except Exception as error:
+        print(f"[DB] Save failed for {hide_id}: {error}", flush=True)
+    return False
 
 
 # =====================================================
@@ -994,6 +1056,7 @@ def inspection_worker():
     global projection_zone_clear_frames
     global projection_active, projection_captured, frozen_projection_detections
     global segregation_sent_for_current_hide, servo_state
+    global current_hide_id, current_inspection_saved
     global latest_stats, output_frame_bytes
 
     tracker = DefectTracker()
@@ -1036,6 +1099,7 @@ def inspection_worker():
     current_ratio = 0.0
     current_reason = "empty belt"
     last_inference_ms = 0.0
+    last_save_attempt = 0.0
 
     while True:
         frame = picam2.capture_array()
@@ -1061,6 +1125,11 @@ def inspection_worker():
 
             cv2.drawContours(frame, [contour], -1, (0, 255, 0), 2)
             lx, ly, lw, lh = cv2.boundingRect(contour)
+
+            if current_hide_id is None:
+                current_hide_id = time.strftime("HIDE-%m%d-%H%M%S")
+                current_inspection_saved = False
+                print(f"[SAVE] Hide detected: {current_hide_id}", flush=True)
 
             if ly <= MIDDLE_Y_MAX and (ly + lh) >= MIDDLE_Y_MIN:
                 leather_in_middle_zone = True
@@ -1110,6 +1179,8 @@ def inspection_worker():
                 projection_active = False
                 projection_captured = False
                 frozen_projection_detections = []
+                current_hide_id = None
+                current_inspection_saved = False
 
                 hide_exit_reset_done = True
                 clear_projector()
@@ -1177,6 +1248,8 @@ def inspection_worker():
                 frozen_segregation_grade = "NO LEATHER"
                 no_leather_since = None
                 current_grade, current_ratio, current_reason = "NO LEATHER", 0.0, "ready"
+                current_hide_id = None
+                current_inspection_saved = False
                 continue
             color_accepted = True
             # Never reuse the moving / annotated frame from before screening.
@@ -1306,6 +1379,23 @@ def inspection_worker():
                     f"{len(frozen_projection_detections)} defect(s)."
                 )
 
+                if (
+                    current_hide_id is not None
+                    and not current_inspection_saved
+                    and frozen_segregation_grade in ("GOOD", "BAD")
+                    and piece_area > 0
+                ):
+                    last_save_attempt = time.monotonic()
+                    print(f"[SAVE] Saving inspection for {current_hide_id}", flush=True)
+                    current_inspection_saved = save_inspection_record(
+                        current_hide_id,
+                        list(last_detections),
+                        frozen_segregation_grade,
+                        current_ratio,
+                        piece_area,
+                        "BELT: PAUSED IN CENTER",
+                    )
+
                 if frozen_projection_detections:
                     if project_detections(frozen_projection_detections):
                         projection_active = True
@@ -1315,6 +1405,27 @@ def inspection_worker():
                     print("[PROJECTOR] No projectable defect found.")
 
                 projection_captured = True
+
+        # Retry a failed API write while this hide is still safely paused.
+        # This prevents a short API restart/network hiccup from losing a record.
+        if (
+            is_center_paused
+            and projection_captured
+            and current_hide_id is not None
+            and not current_inspection_saved
+            and frozen_segregation_grade in ("GOOD", "BAD")
+            and piece_area > 0
+            and time.monotonic() - last_save_attempt >= 2.0
+        ):
+            last_save_attempt = time.monotonic()
+            current_inspection_saved = save_inspection_record(
+                current_hide_id,
+                list(last_detections),
+                frozen_segregation_grade,
+                current_ratio,
+                piece_area,
+                "BELT: PAUSED IN CENTER",
+            )
 
         # -------------------------------------------------
         # 4B. Safe Segregation Command
@@ -1835,6 +1946,11 @@ def inspection_worker():
             "projected_defects": len(frozen_projection_detections),
             "servo_state": servo_state,
             "inference_ms": round(last_inference_ms, 1),
+            "defect_count": len(last_detections),
+            "hide_id": current_hide_id,
+            "inspection_saved": current_inspection_saved,
+            "camera_connected": True,
+            "updated_at": time.time(),
             "segmentation_raw_area": int(getattr(cv_engine, "last_raw_area", 0)),
             "segmentation_refined_area": int(getattr(cv_engine, "last_piece_area", piece_area)),
         }
@@ -2036,12 +2152,32 @@ def generate_frames():
 
 @app.route("/")
 def index():
-    return render_template("index.html")
+    return jsonify({
+        "service": "HideSpec camera stream",
+        "status": "running",
+        "stats": latest_stats,
+        "endpoints": ["/stats", "/api/stream/status", "/video_feed"],
+    })
 
 
 @app.route("/stats")
 def stats():
     return jsonify(latest_stats)
+
+
+@app.route("/api/stream/status")
+def stream_status():
+    with frame_lock:
+        streaming = output_frame_bytes is not None
+    return jsonify({
+        "status": "running",
+        "streaming": streaming,
+        "camera_connected": True,
+        "source": "app5.py",
+        "port": 5000,
+        "video_feed": "/video_feed",
+        "stats": latest_stats,
+    })
 
 
 @app.route("/video_feed")

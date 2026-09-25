@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useState } from 'react';
-import { inspectionService as api, API_BASE_URL as apiBase } from './services/inspectionService';
+import { inspectionService as api, API_BASE_URL as apiBase, STREAM_URL } from './services/inspectionService';
 
 const periods = [['today', 'Today'], ['week', '7 Days'], ['month', '30 Days'], ['all', 'All Time']];
 function Card({ title, children, className = '' }) {
@@ -13,9 +13,17 @@ function Metric({ label, value, tone = '' }) {
 function Monitor({ data, refresh }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [resultFilter, setResultFilter] = useState('all');
+  const [liveFeedOpen, setLiveFeedOpen] = useState(false);
+  const [feedSource, setFeedSource] = useState('');
+  const [feedLoaded, setFeedLoaded] = useState(false);
   const session = data.status?.session || {};
   const stats = data.stream?.stats || {};
-  const currentGrade = stats.grade || 'OFFLINE';
+  const streamStatus = String(data.stream?.status || '').toLowerCase();
+  const streamOnline = ['live', 'online', 'connected', 'running', 'ready'].includes(streamStatus)
+    && data.stream?.camera_connected !== false
+    && data.stream?.streaming !== false;
+  const cameraOnline = streamOnline || feedLoaded;
+  const currentGrade = cameraOnline ? (stats.grade || 'NO LEATHER') : 'OFFLINE';
   const currentGradeClass = currentGrade === 'GOOD'
     ? 'good'
     : currentGrade === 'BAD'
@@ -69,6 +77,21 @@ function Monitor({ data, refresh }) {
         </Card>
 
         <Card title="Current Inspection Result" className="monitor-current-card">
+          <div className="live-feed-control">
+            <span className={`stream-indicator ${cameraOnline ? 'online' : 'offline'}`}>
+              <i /> {cameraOnline ? 'LIVE' : 'OFFLINE'}
+            </span>
+            <button
+              className="live-feed-button"
+              onClick={() => {
+                setFeedSource(`${STREAM_URL}/video_feed?t=${Date.now()}`);
+                setFeedLoaded(false);
+                setLiveFeedOpen(true);
+              }}
+            >
+              View Live Camera
+            </button>
+          </div>
           <div className={`inspection-result-card ${currentGradeClass}`}>
             <span>Current grade</span>
             <strong>{currentGrade}</strong>
@@ -124,6 +147,32 @@ function Monitor({ data, refresh }) {
           </div>
         )}
       </section>
+      {liveFeedOpen && (
+        <div className="live-feed-modal" role="dialog" aria-modal="true" aria-label="Live camera feed">
+          <button className="live-feed-backdrop" aria-label="Close live camera" onClick={() => setLiveFeedOpen(false)} />
+          <section className="live-feed-dialog">
+            <div className="live-feed-dialog-header">
+              <div>
+                <p className="eyebrow">HIDESPEC CAMERA</p>
+                <h2>Live Leather Inspection</h2>
+              </div>
+              <button className="live-feed-close" onClick={() => setLiveFeedOpen(false)} aria-label="Close live camera">×</button>
+            </div>
+            <div className="live-feed-frame">
+              <img
+                src={feedSource}
+                alt="Live leather inspection stream"
+                onLoad={() => setFeedLoaded(true)}
+                onError={() => setFeedLoaded(false)}
+              />
+            </div>
+            <div className="live-feed-footer">
+              <span className={`stream-indicator ${cameraOnline ? 'online' : 'offline'}`}><i /> {cameraOnline ? 'LIVE' : 'OFFLINE'}</span>
+              <span>{stats.grade || 'Waiting for inspection'} · Defects: {stats.defect_count || 0}</span>
+            </div>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

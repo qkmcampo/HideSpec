@@ -82,6 +82,7 @@ def emit_realtime_updates():
 def create_inspection_record(
     hide_id,
     defects,
+    classification=None,
     snapshot_path=None,
     created_at=None,
     defect_area_percent=0,
@@ -90,7 +91,9 @@ def create_inspection_record(
     machine_status=None,
 ):
     total_defects = len(defects)
-    classification = "Bad" if float(defect_area_percent or 0) >= 20 else "Good"
+    classification = classification if classification in ("Good", "Bad") else (
+        "Bad" if float(defect_area_percent or 0) >= 20 else "Good"
+    )
     inspection_id = inspection_db.save_inspection(
         hide_id=hide_id,
         classification=classification,
@@ -248,6 +251,7 @@ def create_inspection():
     defect_area_percent = data.get("defect_area_percent", 0)
     leather_area = data.get("leather_area", 0)
     defect_area = data.get("defect_area", 0)
+    classification = data.get("classification")
     machine_status = data.get("machine_status")
 
     if not hide_id:
@@ -259,6 +263,7 @@ def create_inspection():
     inspection = create_inspection_record(
         hide_id=hide_id,
         defects=defects,
+        classification=classification,
         snapshot_path=snapshot_path,
         created_at=created_at,
         defect_area_percent=defect_area_percent,
